@@ -153,6 +153,62 @@ End Object`);
   });
 });
 
+describe("renderMarkdown — tunnels", () => {
+  it("does not treat an exit tunnel as its own root section", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Entry"
+   bCanHaveOutputs=True
+   NodeGuid=BBBB0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=BBBB0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Tunnel_Entry 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_Tunnel_Exit 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Exit"
+   bCanHaveInputs=True
+   NodeGuid=BBBB0003000000000000000000000003
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_CallFunction_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    // The exit tunnel must not become its own heading
+    expect(md.match(/## Exit/g)).toBeNull();
+    expect(md.match(/loop back to K2Node_Tunnel_Exit/g)).toBeNull();
+    // The entry chain still walks through to the exit
+    expect(md).toMatch(/## Entry/);
+    expect(md).toMatch(/PrintString/);
+    expect(md).toMatch(/- exit/);
+  });
+});
+
+describe("extractMemberRef robustness", () => {
+  it("extracts the trailing class name even with Class' wrapper", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=CCCC0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/KismetSystemLibrary\.PrintString/);
+  });
+
+  it("renders bSelfContext=True calls as self.<name>", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberName="MyLocalFunc",bSelfContext=True)
+   NodeGuid=CCCC0002000000000000000000000002
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/self\.MyLocalFunc/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);

@@ -51,35 +51,13 @@ export function renderMarkdown(
 
 /* ------------------------------ Blueprint ------------------------------ */
 
-const EVENT_CLASSES = [
-  "K2Node_Event",
-  "K2Node_CustomEvent",
-  "K2Node_FunctionEntry",
-  "K2Node_Tunnel",
-  "K2Node_InputAction",
-  "K2Node_InputKey",
-  "K2Node_InputAxisEvent",
-  "K2Node_ComponentBoundEvent",
-  "K2Node_ActorBoundEvent",
-];
-
-function isEventClass(className: string): boolean {
-  return EVENT_CLASSES.some((c) => className.includes(c));
-}
-
 function findExecRoots(graph: ParsedGraph, idx: GraphIndex): T3DNode[] {
   const roots: T3DNode[] = [];
   for (const n of graph.nodes) {
-    if (isEventClass(n.className)) {
-      roots.push(n);
-      continue;
-    }
-    // Node has an output exec pin but no incoming exec edges
     const hasOutExec = n.pins.some((p) => isExecPin(p) && p.direction === "output");
-    if (hasOutExec && !idx.nodesWithIncomingExec.has(n.name)) {
-      // skip pure utility nodes already attached as roots (events handled above)
-      roots.push(n);
-    }
+    if (!hasOutExec) continue;
+    if (idx.nodesWithIncomingExec.has(n.name)) continue;
+    roots.push(n);
   }
   return roots;
 }

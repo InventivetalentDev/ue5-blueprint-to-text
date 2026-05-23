@@ -30,16 +30,32 @@ function extractMemberRef(raw: string): { parent?: string; name?: string } {
   if (!raw) return {};
   const fields = parseStructFields(raw.replace(/^\(/, "").replace(/\)$/, ""));
   const memberName = fields.MemberName ? stripQuotes(fields.MemberName) : undefined;
-  const parentRaw = fields.MemberParent;
+  const selfContext =
+    fields.bSelfContext && stripQuotes(fields.bSelfContext) === "True";
   let parent: string | undefined;
-  if (parentRaw) {
-    const m = parentRaw.match(/['"]([^'"]+)['"]/);
-    if (m) {
-      const last = m[1].split(/[\/.]/).pop();
-      parent = last;
-    }
+  if (selfContext) {
+    parent = "self";
+  } else if (fields.MemberParent) {
+    parent = parseClassPathTail(fields.MemberParent);
   }
   return { parent, name: memberName };
+}
+
+/**
+ * Pulls the trailing identifier out of a UE class reference like:
+ *   Class'"/Script/Engine.KismetSystemLibrary"'
+ *   BlueprintGeneratedClass'/Game/Blueprints/BP_Foo.BP_Foo_C'
+ *   "/Script/Engine.Actor"
+ * Returns just `KismetSystemLibrary`, `BP_Foo_C`, `Actor`. Avoids returning
+ * the wrapping `Class` token by preferring path-like substrings.
+ */
+function parseClassPathTail(raw: string): string | undefined {
+  const stripped = raw.replace(/['"]/g, "");
+  // Prefer the segment after the last `.`, `/`, or `:` separator.
+  const m = stripped.match(/[\/.:]([A-Za-z0-9_]+)\s*$/);
+  if (m) return m[1];
+  const tokens = stripped.split(/[\s/.:]+/).filter(Boolean);
+  return tokens[tokens.length - 1];
 }
 
 /**
