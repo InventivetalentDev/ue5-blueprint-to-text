@@ -1,11 +1,19 @@
 export const DRAFT_KEY = "ue5bp.draft";
+export const DRAFT_CARDS_KEY = "ue5bp.draft.cards";
 export const SAVED_KEY = "ue5bp.saved";
 const LEGACY_HISTORY_KEY = "ue5bp.history";
+
+export type SavedCard = {
+  name: string;
+  kind: "macro" | "function";
+  body: string;
+};
 
 export type SavedGraph = {
   id: string;
   name: string;
   value: string;
+  cards: SavedCard[];
   createdAt: number;
   updatedAt: number;
 };
@@ -41,6 +49,49 @@ export function saveDraft(value: string): void {
   }
 }
 
+function sanitizeCards(input: unknown): SavedCard[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((c): SavedCard[] => {
+    if (
+      c &&
+      typeof c === "object" &&
+      typeof (c as { name?: unknown }).name === "string" &&
+      typeof (c as { body?: unknown }).body === "string" &&
+      ((c as { kind?: unknown }).kind === "macro" ||
+        (c as { kind?: unknown }).kind === "function")
+    ) {
+      const card = c as SavedCard;
+      return [{ name: card.name, kind: card.kind, body: card.body }];
+    }
+    return [];
+  });
+}
+
+export function loadDraftCards(): SavedCard[] {
+  if (!hasWindow()) return [];
+  try {
+    const raw = window.localStorage.getItem(DRAFT_CARDS_KEY);
+    if (!raw) return [];
+    return sanitizeCards(JSON.parse(raw));
+  } catch (e) {
+    console.warn("loadDraftCards failed", e);
+    return [];
+  }
+}
+
+export function saveDraftCards(cards: SavedCard[]): void {
+  if (!hasWindow()) return;
+  try {
+    if (cards.length === 0) {
+      window.localStorage.removeItem(DRAFT_CARDS_KEY);
+    } else {
+      window.localStorage.setItem(DRAFT_CARDS_KEY, JSON.stringify(cards));
+    }
+  } catch (e) {
+    console.warn("saveDraftCards failed", e);
+  }
+}
+
 export function loadSaved(): SavedGraph[] {
   if (!hasWindow()) return [];
   try {
@@ -53,15 +104,28 @@ export function loadSaved(): SavedGraph[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (e): e is SavedGraph =>
-        e &&
-        typeof e.id === "string" &&
-        typeof e.name === "string" &&
-        typeof e.value === "string" &&
-        typeof e.createdAt === "number" &&
-        typeof e.updatedAt === "number",
-    );
+    return parsed.flatMap((e): SavedGraph[] => {
+      if (
+        !e ||
+        typeof e.id !== "string" ||
+        typeof e.name !== "string" ||
+        typeof e.value !== "string" ||
+        typeof e.createdAt !== "number" ||
+        typeof e.updatedAt !== "number"
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: e.id,
+          name: e.name,
+          value: e.value,
+          cards: sanitizeCards(e.cards),
+          createdAt: e.createdAt,
+          updatedAt: e.updatedAt,
+        },
+      ];
+    });
   } catch (e) {
     console.warn("loadSaved failed", e);
     return [];
@@ -102,6 +166,7 @@ export function upsertGraph(
   id: string | null,
   name: string,
   value: string,
+  cards: SavedCard[],
 ): SaveResult {
   const trimmedName = name.trim();
   if (!trimmedName) throw new Error("Name cannot be empty");
@@ -111,7 +176,13 @@ export function upsertGraph(
   let next: SavedGraph[];
   let saved: SavedGraph;
   if (idx >= 0) {
-    saved = { ...current[idx], name: trimmedName, value, updatedAt: now };
+    saved = {
+      ...current[idx],
+      name: trimmedName,
+      value,
+      cards,
+      updatedAt: now,
+    };
     next = [...current];
     next[idx] = saved;
   } else {
@@ -119,6 +190,7 @@ export function upsertGraph(
       id: makeId(),
       name: trimmedName,
       value,
+      cards,
       createdAt: now,
       updatedAt: now,
     };
@@ -149,6 +221,7 @@ export function clearDraft(): void {
   if (!hasWindow()) return;
   try {
     window.localStorage.removeItem(DRAFT_KEY);
+    window.localStorage.removeItem(DRAFT_CARDS_KEY);
   } catch (e) {
     console.warn("clearDraft failed", e);
   }
