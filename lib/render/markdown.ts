@@ -67,6 +67,8 @@ function resolvePinInput(
   ownerNode: T3DNode,
   idx: GraphIndex,
   visiting: Set<string>,
+  dataConsumed: Set<string>,
+  knownDefinitions: Set<string>,
 ): string {
   const incoming = idx.incomingByPin.get(pin.id) ?? [];
   if (incoming.length > 0) {
@@ -77,8 +79,22 @@ function resolvePinInput(
         parts.push(`<- ${edge.from.nodeName}.${edge.from.pinName}`);
         continue;
       }
-      // Render the upstream value as an inline expression
-      parts.push(renderDataExpression(src, edge.from.pinName, idx, visiting));
+      // Don't mark a node as "shown inline" if it has its own exec flow —
+      // it'll show up in an exec chain regardless and shouldn't be hidden
+      // from the orphan list.
+      if (!src.pins.some((p) => isExecPin(p))) {
+        dataConsumed.add(src.name);
+      }
+      parts.push(
+        renderDataExpression(
+          src,
+          edge.from.pinName,
+          idx,
+          visiting,
+          knownDefinitions,
+          dataConsumed,
+        ),
+      );
     }
     return parts.join(", ");
   }
@@ -135,13 +151,15 @@ function renderDataExpression(
   outputPinName: string,
   idx: GraphIndex,
   visiting: Set<string>,
-  knownDefinitions: Set<string> = new Set(),
+  knownDefinitions: Set<string>,
+  dataConsumed: Set<string>,
 ): string {
   if (visiting.has(node.name)) return node.name;
   visiting.add(node.name);
   try {
     const formatted = formatBlueprintNode(node, {
-      resolveInput: (pin) => resolvePinInput(pin, node, idx, visiting),
+      resolveInput: (pin) =>
+        resolvePinInput(pin, node, idx, visiting, dataConsumed, knownDefinitions),
       outputPinName,
       knownDefinitions,
     });
@@ -160,6 +178,7 @@ function renderExecChain(
   seen: Set<string>,
   warnings: string[],
   knownDefinitions: Set<string>,
+  dataConsumed: Set<string>,
 ): string[] {
   const lines: string[] = [];
   let current: T3DNode | undefined = start;
@@ -170,7 +189,15 @@ function renderExecChain(
     }
     seen.add(current.name);
     const formatted = formatBlueprintNode(current, {
-      resolveInput: (pin) => resolvePinInput(pin, current!, idx, new Set()),
+      resolveInput: (pin) =>
+        resolvePinInput(
+          pin,
+          current!,
+          idx,
+          new Set(),
+          dataConsumed,
+          knownDefinitions,
+        ),
       knownDefinitions,
     });
     if (formatted.warnings) warnings.push(...formatted.warnings);
@@ -188,7 +215,15 @@ function renderExecChain(
             const next = idx.nodes.get(edge.to.nodeName);
             if (next)
               lines.push(
-                ...renderExecChain(next, idx, depth + 2, seen, warnings, knownDefinitions),
+                ...renderExecChain(
+                  next,
+                  idx,
+                  depth + 2,
+                  seen,
+                  warnings,
+                  knownDefinitions,
+                  dataConsumed,
+                ),
               );
           }
         }
@@ -219,6 +254,9 @@ function renderBlueprintBody(
   const roots = findExecRoots(graph, idx);
   const runtimeWarnings: string[] = [];
   const lines: string[] = [];
+  // Tracks data nodes that were inlined as expressions into an exec-chain
+  // line — those don't need to re-appear in the "Data nodes" orphan list.
+  const dataConsumed = new Set<string>();
 
   const allVisited = new Set<string>();
   for (const root of roots) {
@@ -231,19 +269,26 @@ function renderBlueprintBody(
       allVisited,
       runtimeWarnings,
       knownDefinitions,
+      dataConsumed,
     );
     lines.push(...chain);
     lines.push("");
   }
+  // Pure-data orphan section: nodes with no exec pins, not visited by any
+  // exec chain, and not already inlined as a data expression upstream.
   const orphans = graph.nodes.filter(
-    (n) => !allVisited.has(n.name) && !n.pins.some((p) => isExecPin(p)),
+    (n) =>
+      !allVisited.has(n.name) &&
+      !dataConsumed.has(n.name) &&
+      !n.pins.some((p) => isExecPin(p)),
   );
   if (orphans.length > 0) {
     lines.push(`${headingLevel} Data nodes`);
     lines.push("");
     for (const n of orphans) {
       const formatted = formatBlueprintNode(n, {
-        resolveInput: (pin) => resolvePinInput(pin, n, idx, new Set()),
+        resolveInput: (pin) =>
+          resolvePinInput(pin, n, idx, new Set(), dataConsumed, knownDefinitions),
         knownDefinitions,
       });
       if (formatted.warnings) runtimeWarnings.push(...formatted.warnings);

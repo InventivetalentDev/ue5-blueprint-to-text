@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parse } from "@/lib/parser/graph";
+import { detectDefinitionInfo } from "@/lib/parser/detect";
 import { renderMarkdown } from "@/lib/render/markdown";
 import { renderJson, renderYaml } from "@/lib/render/structured";
 import type { GraphKind, MacroFunctionDefinition } from "@/lib/parser/types";
@@ -124,7 +125,22 @@ export default function Page() {
   const removeCard = (id: number) =>
     setCards((cs) => cs.filter((c) => c.id !== id));
   const updateCard = (id: number, patch: Partial<DefinitionCard>) =>
-    setCards((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+    setCards((cs) =>
+      cs.map((c) => {
+        if (c.id !== id) return c;
+        const next = { ...c, ...patch };
+        // If the body just changed and the name is still blank, try to pick
+        // a name and kind out of the paste so the user doesn't have to.
+        if (patch.body !== undefined && !c.name.trim()) {
+          const info = detectDefinitionInfo(patch.body);
+          if (info.name) {
+            next.name = info.name;
+            if (info.kind) next.kind = info.kind;
+          }
+        }
+        return next;
+      }),
+    );
 
   return (
     <>

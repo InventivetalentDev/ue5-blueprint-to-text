@@ -296,6 +296,42 @@ End Object`;
   });
 });
 
+describe("Data nodes orphan filter", () => {
+  it("does not list a data node that was already inlined in an exec line", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=DDDD0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_Used"
+   VariableReference=(MemberName="MyVar",bSelfContext=True)
+   NodeGuid=DDDD0002000000000000000000000002
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="MyVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_Stray"
+   VariableReference=(MemberName="LooseVar",bSelfContext=True)
+   NodeGuid=DDDD0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="LooseVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=())
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=DDDD0004000000000000000000000004
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="InString",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_Used 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    // Used variable was inlined into the call args, so the orphan list
+    // shouldn't repeat it.
+    expect(md).toMatch(/InString=MyVar/);
+    expect(md).not.toMatch(/K2Node_VariableGet_Used/);
+    // The stray variable still appears under Data nodes.
+    expect(md).toMatch(/## Data nodes/);
+    expect(md).toMatch(/LooseVar/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);
