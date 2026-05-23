@@ -83,6 +83,17 @@ header.app-header .tagline {
   border-color: var(--accent);
 }
 
+.controls button:disabled,
+.controls select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.controls button.danger:hover:not(:disabled) {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
 main.split {
   flex: 1;
   display: grid;
