@@ -1,11 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { parse } from "@/lib/parser/graph";
 import { renderMarkdown } from "@/lib/render/markdown";
 import { renderJson, renderYaml } from "@/lib/render/structured";
 import type { GraphKind } from "@/lib/parser/types";
 import { EXAMPLES } from "./examples";
+import {
+  clearAll,
+  formatRelative,
+  loadDraft,
+  loadHistory,
+  pushHistory,
+  saveDraft,
+  type HistoryEntry,
+} from "@/lib/storage";
 
 type Format = "markdown" | "yaml" | "json";
 type KindChoice = "auto" | GraphKind;
@@ -14,6 +23,22 @@ export default function Page() {
   const [input, setInput] = useState("");
   const [format, setFormat] = useState<Format>("markdown");
   const [kindChoice, setKindChoice] = useState<KindChoice>("auto");
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [hydrated, setHydrated] = useState(false);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+
+  useEffect(() => {
+    setInput(loadDraft());
+    setHistory(loadHistory());
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const t = setTimeout(() => saveDraft(input), 500);
+    return () => clearTimeout(t);
+  }, [input, hydrated]);
 
   const result = useMemo(() => {
     if (!input.trim()) return { output: "", warnings: [] as string[], error: null as string | null };
@@ -40,9 +65,30 @@ export default function Page() {
     await navigator.clipboard.writeText(result.output);
   };
 
+  const snapshot = (prev: string) => {
+    if (!prev.trim()) return;
+    setHistory(pushHistory(prev));
+  };
+
   const loadExample = (idx: number) => {
     if (idx < 0 || idx >= EXAMPLES.length) return;
+    snapshot(inputRef.current);
     setInput(EXAMPLES[idx].value);
+  };
+
+  const restoreFromHistory = (id: string) => {
+    const entry = history.find((h) => h.id === id);
+    if (!entry) return;
+    snapshot(inputRef.current);
+    setInput(entry.value);
+  };
+
+  const handleClear = () => {
+    if (!input && history.length === 0) return;
+    if (!window.confirm("Clear saved draft and history?")) return;
+    clearAll();
+    setHistory([]);
+    setInput("");
   };
 
   return (
@@ -72,6 +118,27 @@ export default function Page() {
             </select>
           </label>
           <label>
+            History
+            <select
+              defaultValue=""
+              disabled={history.length === 0}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v !== "") restoreFromHistory(v);
+                e.target.value = "";
+              }}
+            >
+              <option value="">
+                {history.length === 0 ? "No history" : "Restore…"}
+              </option>
+              {history.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {formatRelative(h.savedAt)} — {h.preview}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Kind
             <select
               value={kindChoice}
@@ -93,6 +160,14 @@ export default function Page() {
           <button onClick={copy} disabled={!result.output}>
             Copy output
           </button>
+          <button
+            className="danger"
+            onClick={handleClear}
+            disabled={!input && history.length === 0}
+            title="Clear saved draft and history"
+          >
+            Clear
+          </button>
         </div>
       </header>
       <main className="split">
@@ -109,6 +184,7 @@ export default function Page() {
                 "Select nodes in the Blueprint or Material editor, press Ctrl+C, paste here."
               }
               value={input}
+              onPaste={() => snapshot(inputRef.current)}
               onChange={(e) => setInput(e.target.value)}
             />
           </div>
