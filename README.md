@@ -49,5 +49,20 @@ Blueprint/Material detection if needed.
 ## Scripts
 
 - `npm run dev` — Next.js dev server
-- `npm run build` — production build
+- `npm run build` — static export to `out/`
 - `npm test` — vitest unit tests for parser + renderers
+
+## Deploying to Cloudflare
+
+The app builds to a fully static bundle (`next.config.mjs` sets
+`output: "export"`), so it deploys as Cloudflare static assets — no Workers
+runtime, no OpenNext adapter needed.
+
+`wrangler.jsonc` points at `./out`. After `npm run build`:
+
+```bash
+npx wrangler deploy
+```
+
+For Cloudflare's web build pipeline, set the build command to `npm run build`
+and the output directory to `out`.

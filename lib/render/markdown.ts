@@ -1,7 +1,7 @@
 import type { Edge, ParsedGraph, Pin, T3DNode } from "../parser/types";
 import { parseStructFields, stripQuotes, unwrapParens } from "../parser/properties";
 import { formatBlueprintNode, isExecPin, shortClassName } from "./nodeFormatters/blueprint";
-import { formatMaterialExpression } from "./nodeFormatters/material";
+import { exprFriendlyName, formatMaterialExpression } from "./nodeFormatters/material";
 
 interface GraphIndex {
   nodes: Map<string, T3DNode>;
@@ -266,7 +266,12 @@ function findMaterialRoots(graph: ParsedGraph): T3DNode[] {
   return graph.nodes.filter(
     (n) =>
       n.className.includes("MaterialGraphNode_Root") ||
-      n.className.includes("MaterialExpressionFunctionOutput"),
+      n.className.includes("MaterialGraphNode_OutputResult") ||
+      n.className.includes("MaterialExpressionFunctionOutput") ||
+      // The wrapper sometimes carries the output as a sub-object instead.
+      n.subObjects.some((s) =>
+        s.className.includes("MaterialExpressionFunctionOutput"),
+      ),
   );
 }
 
@@ -298,9 +303,9 @@ function renderMaterialExpr(
       if (!src) return `<-${edge.from.nodeName}`;
       return renderMaterialExpr(src, edge.from.pinName, idx, letBindings, visiting);
     });
-    const expr = resolved ?? `${shortClassName(node)}()`;
+    const expr = resolved ?? `${exprFriendlyName(node)}()`;
     if (refCount > 1) {
-      const letName = `expr_${letBindings.size + 1}_${shortClassName(node)}`;
+      const letName = `expr_${letBindings.size + 1}_${exprFriendlyName(node)}`;
       letBindings.set(node.name, letName);
       return letName;
     }
@@ -337,7 +342,7 @@ function renderMaterial(graph: ParsedGraph): string {
     });
     for (const t of terminals) {
       const expr = renderMaterialExpr(t, undefined, idx, new Map(), new Set());
-      out.push(`- \`${shortClassName(t)}\` = ${expr}`);
+      out.push(`- \`${exprFriendlyName(t)}\` = ${expr}`);
     }
     out.push("");
     return out.join("\n").trim() + "\n";
@@ -371,7 +376,7 @@ function renderMaterial(graph: ParsedGraph): string {
           if (letBindings.has(src2.name)) return letBindings.get(src2.name);
           return renderMaterialExpr(src2, edge.from.pinName, idx, letBindings, new Set());
         });
-        out.push(`let ${varName} = ${expr ?? shortClassName(node) + "()"};`);
+        out.push(`let ${varName} = ${expr ?? exprFriendlyName(node) + "()"};`);
       }
       out.push("");
       for (const l of lines) out.push(l);

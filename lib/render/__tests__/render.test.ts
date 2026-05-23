@@ -50,6 +50,44 @@ describe("renderMarkdown — material", () => {
     expect(md).toMatch(/# Material Graph/);
     expect(md).toMatch(/BaseColor = /);
   });
+
+  it("resolves MaterialGraphNode wrappers to their expression class", () => {
+    const wrapped = `Begin Object Class=/Script/UnrealEd.MaterialGraphNode Name="MaterialGraphNode_0"
+   Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_0"
+   End Object
+   Begin Object Name="MaterialExpressionMultiply_0"
+      MaterialExpressionGuid=BBBB0001000000000000000000000001
+   End Object
+   MaterialExpression=MaterialExpressionMultiply'"MaterialExpressionMultiply_0"'
+   NodeGuid=CCCC0001000000000000000000000001
+   CustomProperties Pin (PinId=10000000000000000000000000000001,PinName="A",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_1 10000000000000000000000000000003,))
+   CustomProperties Pin (PinId=10000000000000000000000000000002,PinName="Output",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_Root_0 10000000000000000000000000000004,))
+End Object
+Begin Object Class=/Script/UnrealEd.MaterialGraphNode Name="MaterialGraphNode_1"
+   Begin Object Class=/Script/Engine.MaterialExpressionConstant3Vector Name="MaterialExpressionConstant3Vector_0"
+   End Object
+   Begin Object Name="MaterialExpressionConstant3Vector_0"
+      Constant=(R=1.0,G=0.5,B=0.2)
+      MaterialExpressionGuid=BBBB0002000000000000000000000002
+   End Object
+   MaterialExpression=MaterialExpressionConstant3Vector'"MaterialExpressionConstant3Vector_0"'
+   NodeGuid=CCCC0002000000000000000000000002
+   CustomProperties Pin (PinId=10000000000000000000000000000003,PinName="RGB",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_0 10000000000000000000000000000001,))
+End Object
+Begin Object Class=/Script/UnrealEd.MaterialGraphNode_Root Name="MaterialGraphNode_Root_0"
+   NodeGuid=CCCC0003000000000000000000000003
+   CustomProperties Pin (PinId=10000000000000000000000000000004,PinName="BaseColor",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_0 10000000000000000000000000000002,))
+End Object`;
+    const g = parse(wrapped);
+    expect(g.kind).toBe("material");
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/# Material Graph/);
+    expect(md).toMatch(/BaseColor = /);
+    // The Multiply expression should appear, not the bare "MaterialGraphNode" wrapper
+    expect(md).toMatch(/\*/);
+    expect(md).not.toMatch(/MaterialGraphNode\(\)/);
+    expect(md).toMatch(/R=1\.0/);
+  });
 });
 
 describe("structured renderers", () => {

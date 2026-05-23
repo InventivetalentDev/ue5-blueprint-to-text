@@ -2,75 +2,66 @@ import type { T3DNode } from "./types";
 import { parsePinLine } from "./pins";
 import { parseValue, stripQuotes } from "./properties";
 
-interface RawBlock {
-  header: string;
-  bodyLines: string[];
-  subBlocks: RawBlock[];
-  raw: string;
-}
-
 const BEGIN_RE = /^\s*Begin\s+Object\b(.*)$/i;
 const END_RE = /^\s*End\s+Object\s*$/i;
 
-function splitBlocks(lines: string[], startIndex: number): {
-  blocks: RawBlock[];
-  consumed: number;
-} {
-  const blocks: RawBlock[] = [];
-  let i = startIndex;
+interface ParsedBlock {
+  header: string;
+  bodyLines: string[];
+  subBlocks: ParsedBlock[];
+  raw: string;
+}
+
+/**
+ * Parses a single `Begin Object` ... `End Object` block that starts at
+ * `lines[startIdx]`. Returns the block and the index immediately after its
+ * `End Object`. Properties and nested sub-blocks at the wrapper's level are
+ * captured in `bodyLines` and `subBlocks` respectively.
+ */
+function parseBlockAt(
+  lines: string[],
+  startIdx: number,
+): { block: ParsedBlock; endIdx: number } {
+  const m = lines[startIdx].match(BEGIN_RE);
+  if (!m) {
+    throw new Error(`Expected 'Begin Object' at line ${startIdx + 1}`);
+  }
+  const header = m[1].trim();
+  const bodyLines: string[] = [];
+  const subBlocks: ParsedBlock[] = [];
+  let i = startIdx + 1;
   while (i < lines.length) {
     const line = lines[i];
     if (END_RE.test(line)) {
-      return { blocks, consumed: i - startIndex };
+      const raw = lines.slice(startIdx, i + 1).join("\n");
+      return {
+        block: { header, bodyLines, subBlocks, raw },
+        endIdx: i + 1,
+      };
     }
-    const m = line.match(BEGIN_RE);
-    if (!m) {
-      i++;
+    if (BEGIN_RE.test(line)) {
+      const sub = parseBlockAt(lines, i);
+      subBlocks.push(sub.block);
+      i = sub.endIdx;
       continue;
     }
-    const header = m[1].trim();
-    const bodyStart = i + 1;
-    const bodyLines: string[] = [];
-    const subBlocks: RawBlock[] = [];
-    let j = bodyStart;
-    while (j < lines.length) {
-      const inner = lines[j];
-      if (END_RE.test(inner)) break;
-      const innerBegin = inner.match(BEGIN_RE);
-      if (innerBegin) {
-        const sub = splitBlocks(lines, j);
-        if (sub.blocks.length === 0) {
-          // malformed — skip line
-          j++;
-          continue;
-        }
-        subBlocks.push(...sub.blocks);
-        j += sub.consumed;
-        // sub.consumed brings us to the End Object of the sub; consume it
-        if (j < lines.length && END_RE.test(lines[j])) j++;
-        continue;
-      }
-      bodyLines.push(inner);
-      j++;
-    }
-    const endIdx = j;
-    const raw = lines.slice(i, Math.min(endIdx + 1, lines.length)).join("\n");
-    blocks.push({ header, bodyLines, subBlocks, raw });
-    i = endIdx + 1; // skip past End Object
+    bodyLines.push(line);
+    i++;
   }
-  return { blocks, consumed: i - startIndex };
+  // EOF without End Object — return what we have
+  const raw = lines.slice(startIdx, i).join("\n");
+  return {
+    block: { header, bodyLines, subBlocks, raw },
+    endIdx: i,
+  };
 }
 
 function parseHeader(header: string): { className: string; name: string } {
-  // Header is the part after "Begin Object", e.g.
-  //   Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
   const props: Record<string, string> = {};
-  // tokenize by top-level whitespace, respecting quotes and parens
   let i = 0;
   while (i < header.length) {
     while (i < header.length && /\s/.test(header[i])) i++;
     if (i >= header.length) break;
-    // read key
     const keyStart = i;
     while (i < header.length && header[i] !== "=") i++;
     const key = header.slice(keyStart, i).trim();
@@ -90,7 +81,7 @@ function isPinLine(line: string): boolean {
   return /^\s*CustomProperties\s+Pin\s*\(/i.test(line);
 }
 
-function blockToNode(block: RawBlock): T3DNode {
+function blockToNode(block: ParsedBlock): T3DNode {
   const { className, name } = parseHeader(block.header);
   const properties: Record<string, string> = {};
   const pins = [];
@@ -122,6 +113,16 @@ function blockToNode(block: RawBlock): T3DNode {
 
 export function tokenize(input: string): T3DNode[] {
   const lines = input.replace(/\r\n/g, "\n").split("\n");
-  const { blocks } = splitBlocks(lines, 0);
+  const blocks: ParsedBlock[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (BEGIN_RE.test(lines[i])) {
+      const { block, endIdx } = parseBlockAt(lines, i);
+      blocks.push(block);
+      i = endIdx;
+      continue;
+    }
+    i++;
+  }
   return blocks.map(blockToNode);
 }
