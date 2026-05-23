@@ -1,4 +1,4 @@
-import type { Pin, T3DNode } from "../../parser/types";
+import type { ParsedGraph, Pin, T3DNode } from "../../parser/types";
 import { parseStructFields, stripQuotes } from "../../parser/properties";
 
 export interface FormatContext {
@@ -242,16 +242,6 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     const execOutputs = node.pins.filter(
       (p) => p.direction === "output" && isExecPin(p),
     );
-    const warnings: string[] = [];
-    if (
-      ref.assetPath &&
-      !ref.isEngine &&
-      !ctx.knownDefinitions?.has(macroName)
-    ) {
-      warnings.push(
-        `Macro \`${macroName}\` is custom (${ref.assetPath}) — its body is not in the paste; only the call site is shown. Paste its graph separately to include the body.`,
-      );
-    }
     return {
       statement: `${macroName}(${args.join(", ")})`,
       expression: ctx.outputPinName
@@ -261,7 +251,6 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
         execOutputs.length >= 2
           ? execOutputs.map((p) => ({ pinName: p.name, label: p.name }))
           : undefined,
-      warnings: warnings.length ? warnings : undefined,
     };
   }
   if (cls.includes("K2Node_VariableGet")) {
@@ -333,4 +322,26 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     statement: args ? `${short}(${args})` : short,
     expression: args ? `${short}(${args})` : short,
   };
+}
+
+/** Walks the graph for warnings that should surface regardless of which
+ * output format the user picks — currently just "custom macro body not in
+ * paste". Independent of the per-node formatter pass so YAML/JSON output
+ * gets the same warnings as Markdown. */
+export function collectMacroWarnings(
+  graph: ParsedGraph,
+  knownDefinitions: Set<string>,
+): string[] {
+  const out = new Set<string>();
+  for (const node of graph.nodes) {
+    if (!node.className.includes("K2Node_MacroInstance")) continue;
+    const ref = extractGraphRef(node.properties.MacroGraphReference ?? "");
+    const macroName = ref.graphName ?? "Macro";
+    if (!ref.assetPath || ref.isEngine || knownDefinitions.has(macroName))
+      continue;
+    out.add(
+      `Macro \`${macroName}\` is custom (${ref.assetPath}) — its body is not in the paste; only the call site is shown. Paste its graph separately to include the body.`,
+    );
+  }
+  return [...out];
 }

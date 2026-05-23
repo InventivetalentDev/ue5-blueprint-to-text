@@ -34,7 +34,7 @@ End Object`;
 describe("renderMarkdown — blueprint", () => {
   it("renders the event header and call chain", () => {
     const g = parse(BP);
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Blueprint Graph/);
     expect(md).toMatch(/Event ReceiveBeginPlay/);
     expect(md).toMatch(/PrintString/);
@@ -46,7 +46,7 @@ describe("renderMarkdown — material", () => {
   it("emits a BaseColor = expression", () => {
     const g = parse(MAT);
     expect(g.kind).toBe("material");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Material Graph/);
     expect(md).toMatch(/BaseColor = /);
   });
@@ -80,7 +80,7 @@ Begin Object Class=/Script/UnrealEd.MaterialGraphNode_Root Name="MaterialGraphNo
 End Object`;
     const g = parse(wrapped);
     expect(g.kind).toBe("material");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Material Graph/);
     expect(md).toMatch(/BaseColor = /);
     // The Multiply expression should appear, not the bare "MaterialGraphNode" wrapper
@@ -114,7 +114,7 @@ End Object`;
         "ForEachLoop",
       ),
     );
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/ForEachLoop\(/);
     expect(md).toMatch(/LoopBody:/);
     expect(md).toMatch(/Completed:/);
@@ -124,10 +124,26 @@ End Object`;
 
   it("warns when a custom macro body is not in the paste", () => {
     const g = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
-    const md = renderMarkdown(g);
-    expect(md).toMatch(/MyCoolMacro\(/);
-    expect(md).toMatch(/Warnings:/);
-    expect(md).toMatch(/MyCoolMacro.*custom.*BP_MyLib/);
+    const rendered = renderMarkdown(g);
+    expect(rendered.output).toMatch(/MyCoolMacro\(/);
+    expect(rendered.output).toMatch(/Warnings:/);
+    expect(rendered.output).toMatch(/MyCoolMacro.*custom.*BP_MyLib/);
+    // The same warning must be surfaced via the return value too so the
+    // UI panel can show it without re-parsing the Markdown.
+    expect(rendered.warnings.some((w) => /MyCoolMacro.*custom/.test(w))).toBe(
+      true,
+    );
+  });
+
+  it("surfaces macro warnings on YAML and JSON outputs too", () => {
+    const g = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const y = renderYaml(g);
+    const j = renderJson(g);
+    expect(y.warnings.some((w) => /MyCoolMacro/.test(w))).toBe(true);
+    expect(j.warnings.some((w) => /MyCoolMacro/.test(w))).toBe(true);
+    // And the structured `warnings:` field in the serialized output too.
+    expect(y.output).toMatch(/MyCoolMacro/);
+    expect(j.output).toMatch(/MyCoolMacro/);
   });
 
   it("renders a supplied macro body in its own section and drops the warning", () => {
@@ -146,7 +162,7 @@ Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallF
 End Object`);
     const md = renderMarkdown(main, [
       { name: "MyCoolMacro", kind: "macro", graph: macroBody },
-    ]);
+    ]).output;
     expect(md).toMatch(/## Macro: MyCoolMacro/);
     expect(md).toMatch(/from macro body/);
     expect(md).not.toMatch(/Warnings:[\s\S]*MyCoolMacro/);
@@ -172,7 +188,7 @@ Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Exit
    CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_CallFunction_0 33333333333333333333333333333333,))
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     // The exit tunnel must not become its own heading
     expect(md.match(/## Exit/g)).toBeNull();
     expect(md.match(/loop back to K2Node_Tunnel_Exit/g)).toBeNull();
@@ -192,7 +208,7 @@ describe("extractMemberRef robustness", () => {
    CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/KismetSystemLibrary\.PrintString/);
   });
 
@@ -204,7 +220,7 @@ End Object`;
    CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/self\.MyLocalFunc/);
   });
 });
@@ -228,7 +244,7 @@ End Object`;
         `(MacroGraph="/Script/Engine.EdGraph'DrawDebugArrowDown'",GraphBlueprint="/Script/Engine.Blueprint'/Game/BP_SnowManager.BP_SnowManager'",GraphGuid=FA23934F4198BC9F0A99B88D89B778FA)`,
       ),
     );
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/DrawDebugArrowDown\(/);
     expect(md).toMatch(/BP_SnowManager/);
   });
@@ -239,7 +255,7 @@ End Object`;
         `(MacroGraph=EdGraph'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoop"',GraphBlueprint=Blueprint'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"',GraphGuid=DEAD)`,
       ),
     );
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/ForEachLoop\(/);
     expect(md).not.toMatch(/Warnings:[\s\S]*ForEachLoop/);
   });
@@ -265,7 +281,7 @@ Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallF
    CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_Knot_0 33333333333333333333333333333333,))
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     // The knot wrapper should not appear; the variable name shows through.
     expect(md).toMatch(/A=MyVar/);
     expect(md).not.toMatch(/Knot\(InputPin=/);
@@ -291,7 +307,7 @@ Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallF
    CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="real",Direction="EGPD_Input",LinkedTo=(K2Node_BreakStruct_0 33333333333333333333333333333333,))
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/A=MyVec\.X/);
   });
 });
@@ -321,7 +337,7 @@ Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallF
    CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="InString",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_Used 33333333333333333333333333333333,))
 End Object`;
     const g = parse(t3d, "blueprint");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     // Used variable was inlined into the call args, so the orphan list
     // shouldn't repeat it.
     expect(md).toMatch(/InString=MyVar/);
@@ -335,14 +351,14 @@ End Object`;
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);
-    const y = renderYaml(g);
+    const y = renderYaml(g).output;
     expect(y).toMatch(/kind: blueprint/);
     expect(y).toMatch(/K2Node_Event_0/);
     expect(y).toMatch(/edges:/);
   });
   it("renderJson round-trips via JSON.parse", () => {
     const g = parse(BP);
-    const j = renderJson(g);
+    const j = renderJson(g).output;
     const obj = JSON.parse(j);
     expect(obj.kind).toBe("blueprint");
     expect(obj.nodes).toHaveLength(2);

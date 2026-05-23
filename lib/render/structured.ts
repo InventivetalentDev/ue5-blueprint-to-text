@@ -5,6 +5,8 @@ import type {
   Pin,
   T3DNode,
 } from "../parser/types";
+import { collectMacroWarnings } from "./nodeFormatters/blueprint";
+import { collectAllWarnings, type RenderResult } from "./markdown";
 
 interface SerializedPin {
   id: string;
@@ -66,9 +68,13 @@ export function toSerializedGraph(
   graph: ParsedGraph,
   definitions: MacroFunctionDefinition[] = [],
 ): SerializedGraph {
+  const knownDefinitions = new Set(definitions.map((d) => d.name));
   return {
     kind: graph.kind,
-    warnings: graph.warnings,
+    warnings: [
+      ...graph.warnings,
+      ...collectMacroWarnings(graph, knownDefinitions),
+    ],
     nodes: graph.nodes.map(serializeNode),
     edges: graph.edges,
     definitions: definitions.length
@@ -77,7 +83,10 @@ export function toSerializedGraph(
           kind: d.kind,
           nodes: d.graph.nodes.map(serializeNode),
           edges: d.graph.edges,
-          warnings: d.graph.warnings,
+          warnings: [
+            ...d.graph.warnings,
+            ...collectMacroWarnings(d.graph, knownDefinitions),
+          ],
         }))
       : undefined,
   };
@@ -86,13 +95,21 @@ export function toSerializedGraph(
 export function renderYaml(
   graph: ParsedGraph,
   definitions: MacroFunctionDefinition[] = [],
-): string {
-  return YAML.stringify(toSerializedGraph(graph, definitions), { lineWidth: 0 });
+): RenderResult {
+  return {
+    output: YAML.stringify(toSerializedGraph(graph, definitions), {
+      lineWidth: 0,
+    }),
+    warnings: collectAllWarnings(graph, definitions),
+  };
 }
 
 export function renderJson(
   graph: ParsedGraph,
   definitions: MacroFunctionDefinition[] = [],
-): string {
-  return JSON.stringify(toSerializedGraph(graph, definitions), null, 2);
+): RenderResult {
+  return {
+    output: JSON.stringify(toSerializedGraph(graph, definitions), null, 2),
+    warnings: collectAllWarnings(graph, definitions),
+  };
 }

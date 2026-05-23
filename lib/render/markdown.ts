@@ -6,8 +6,39 @@ import type {
   T3DNode,
 } from "../parser/types";
 import { parseStructFields, stripQuotes, unwrapParens } from "../parser/properties";
-import { formatBlueprintNode, isExecPin, shortClassName } from "./nodeFormatters/blueprint";
+import {
+  collectMacroWarnings,
+  formatBlueprintNode,
+  isExecPin,
+  shortClassName,
+} from "./nodeFormatters/blueprint";
 import { exprFriendlyName, formatMaterialExpression } from "./nodeFormatters/material";
+
+export interface RenderResult {
+  output: string;
+  /** Combined parser-level and render-level warnings for UI display. */
+  warnings: string[];
+}
+
+export function collectAllWarnings(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): string[] {
+  const knownDefinitions = new Set(definitions.map((d) => d.name));
+  const warnings: string[] = [
+    ...graph.warnings,
+    ...collectMacroWarnings(graph, knownDefinitions),
+  ];
+  for (const def of definitions) {
+    const sub = [
+      ...def.graph.warnings,
+      ...collectMacroWarnings(def.graph, knownDefinitions),
+    ];
+    for (const w of sub) warnings.push(`[${def.name}] ${w}`);
+  }
+  // Dedupe while preserving order.
+  return Array.from(new Set(warnings));
+}
 
 interface GraphIndex {
   nodes: Map<string, T3DNode>;
@@ -44,8 +75,10 @@ function indexGraph(graph: ParsedGraph): GraphIndex {
 export function renderMarkdown(
   graph: ParsedGraph,
   definitions: MacroFunctionDefinition[] = [],
-): string {
-  if (graph.kind === "material") return renderMaterial(graph);
+): RenderResult {
+  if (graph.kind === "material") {
+    return { output: renderMaterial(graph), warnings: [...graph.warnings] };
+  }
   return renderBlueprint(graph, definitions);
 }
 
@@ -302,12 +335,11 @@ function renderBlueprintBody(
 function renderBlueprint(
   graph: ParsedGraph,
   definitions: MacroFunctionDefinition[] = [],
-): string {
+): RenderResult {
   const knownDefinitions = new Set(definitions.map((d) => d.name));
   const main = renderBlueprintBody(graph, knownDefinitions, "##");
 
   const definitionSections: string[] = [];
-  const definitionWarnings: string[] = [];
   for (const def of definitions) {
     const label = def.kind === "macro" ? "Macro" : "Function";
     definitionSections.push(`## ${label}: ${def.name}`);
@@ -319,20 +351,13 @@ function renderBlueprint(
     }
     const sub = renderBlueprintBody(def.graph, knownDefinitions, "###");
     definitionSections.push(...sub.lines);
-    definitionWarnings.push(
-      ...def.graph.warnings.map((w) => `[${def.name}] ${w}`),
-      ...sub.warnings.map((w) => `[${def.name}] ${w}`),
-    );
   }
+
+  const allWarnings = collectAllWarnings(graph, definitions);
 
   const out: string[] = [];
   out.push(`# Blueprint Graph`);
   out.push("");
-  const allWarnings = [
-    ...graph.warnings,
-    ...dedupe(main.warnings),
-    ...dedupe(definitionWarnings),
-  ];
   if (allWarnings.length) {
     out.push(`> Warnings:`);
     for (const w of allWarnings) out.push(`> - ${w}`);
@@ -347,11 +372,7 @@ function renderBlueprint(
   if (definitionSections.length > 0) {
     out.push(...definitionSections);
   }
-  return out.join("\n").trim() + "\n";
-}
-
-function dedupe(items: string[]): string[] {
-  return Array.from(new Set(items));
+  return { output: out.join("\n").trim() + "\n", warnings: allWarnings };
 }
 
 function rootHeading(node: T3DNode): string {

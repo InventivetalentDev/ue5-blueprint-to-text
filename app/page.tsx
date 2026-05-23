@@ -71,13 +71,15 @@ export default function Page() {
           kind: c.kind,
           graph: parse(c.body, "blueprint"),
         }));
-      let output: string;
-      if (format === "markdown") output = renderMarkdown(graph, definitions);
-      else if (format === "yaml") output = renderYaml(graph, definitions);
-      else output = renderJson(graph, definitions);
+      const rendered =
+        format === "markdown"
+          ? renderMarkdown(graph, definitions)
+          : format === "yaml"
+            ? renderYaml(graph, definitions)
+            : renderJson(graph, definitions);
       return {
-        output,
-        warnings: graph.warnings,
+        output: rendered.output,
+        warnings: rendered.warnings,
         error: null,
         kind: graph.kind,
       };
