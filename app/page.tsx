@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { parse } from "@/lib/parser/graph";
 import { renderMarkdown } from "@/lib/render/markdown";
 import { renderJson, renderYaml } from "@/lib/render/structured";
-import type { GraphKind } from "@/lib/parser/types";
+import type { GraphKind, MacroFunctionDefinition } from "@/lib/parser/types";
 import { EXAMPLES } from "./examples";
 import {
   clearAll,
@@ -19,10 +19,26 @@ import {
 type Format = "markdown" | "yaml" | "json";
 type KindChoice = "auto" | GraphKind;
 
+interface DefinitionCard {
+  id: number;
+  name: string;
+  kind: "macro" | "function";
+  body: string;
+}
+
+let nextCardId = 1;
+const newCard = (): DefinitionCard => ({
+  id: nextCardId++,
+  name: "",
+  kind: "macro",
+  body: "",
+});
+
 export default function Page() {
   const [input, setInput] = useState("");
   const [format, setFormat] = useState<Format>("markdown");
   const [kindChoice, setKindChoice] = useState<KindChoice>("auto");
+  const [cards, setCards] = useState<DefinitionCard[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const inputRef = useRef(input);
@@ -41,16 +57,29 @@ export default function Page() {
   }, [input, hydrated]);
 
   const result = useMemo(() => {
-    if (!input.trim()) return { output: "", warnings: [] as string[], error: null as string | null };
+    if (!input.trim())
+      return { output: "", warnings: [] as string[], error: null as string | null };
     try {
       const override =
         kindChoice === "auto" ? undefined : (kindChoice as GraphKind);
       const graph = parse(input, override);
+      const definitions: MacroFunctionDefinition[] = cards
+        .filter((c) => c.name.trim() && c.body.trim())
+        .map((c) => ({
+          name: c.name.trim(),
+          kind: c.kind,
+          graph: parse(c.body, "blueprint"),
+        }));
       let output: string;
-      if (format === "markdown") output = renderMarkdown(graph);
-      else if (format === "yaml") output = renderYaml(graph);
-      else output = renderJson(graph);
-      return { output, warnings: graph.warnings, error: null, kind: graph.kind };
+      if (format === "markdown") output = renderMarkdown(graph, definitions);
+      else if (format === "yaml") output = renderYaml(graph, definitions);
+      else output = renderJson(graph, definitions);
+      return {
+        output,
+        warnings: graph.warnings,
+        error: null,
+        kind: graph.kind,
+      };
     } catch (e) {
       return {
         output: "",
@@ -58,7 +87,7 @@ export default function Page() {
         error: e instanceof Error ? e.message : String(e),
       };
     }
-  }, [input, format, kindChoice]);
+  }, [input, format, kindChoice, cards]);
 
   const copy = async () => {
     if (!result.output) return;
@@ -90,6 +119,12 @@ export default function Page() {
     setHistory([]);
     setInput("");
   };
+
+  const addCard = () => setCards((cs) => [...cs, newCard()]);
+  const removeCard = (id: number) =>
+    setCards((cs) => cs.filter((c) => c.id !== id));
+  const updateCard = (id: number, patch: Partial<DefinitionCard>) =>
+    setCards((cs) => cs.map((c) => (c.id === id ? { ...c, ...patch } : c)));
 
   return (
     <>
@@ -187,6 +222,56 @@ export default function Page() {
               onPaste={() => snapshot(inputRef.current)}
               onChange={(e) => setInput(e.target.value)}
             />
+          </div>
+          <div className="definitions">
+            <div className="definitions-header">
+              <span>Macro / function bodies</span>
+              <button onClick={addCard}>+ Add</button>
+            </div>
+            {cards.length === 0 && (
+              <div className="definitions-empty">
+                Optional. Paste the body of a custom macro or function and label
+                it with the macro/function name to include it in the output.
+              </div>
+            )}
+            {cards.map((card) => (
+              <div key={card.id} className="definition-card">
+                <div className="definition-card-row">
+                  <input
+                    className="definition-name"
+                    type="text"
+                    placeholder="MacroName"
+                    value={card.name}
+                    onChange={(e) => updateCard(card.id, { name: e.target.value })}
+                  />
+                  <select
+                    value={card.kind}
+                    onChange={(e) =>
+                      updateCard(card.id, {
+                        kind: e.target.value as "macro" | "function",
+                      })
+                    }
+                  >
+                    <option value="macro">Macro</option>
+                    <option value="function">Function</option>
+                  </select>
+                  <button
+                    className="definition-remove"
+                    onClick={() => removeCard(card.id)}
+                    aria-label="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+                <textarea
+                  className="definition-body"
+                  spellCheck={false}
+                  placeholder="Paste the macro/function graph here (Ctrl+C from inside it)…"
+                  value={card.body}
+                  onChange={(e) => updateCard(card.id, { body: e.target.value })}
+                />
+              </div>
+            ))}
           </div>
         </section>
         <section className="pane">

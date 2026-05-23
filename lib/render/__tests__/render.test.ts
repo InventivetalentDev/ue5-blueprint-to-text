@@ -129,6 +129,28 @@ End Object`;
     expect(md).toMatch(/Warnings:/);
     expect(md).toMatch(/MyCoolMacro.*custom.*BP_MyLib/);
   });
+
+  it("renders a supplied macro body in its own section and drops the warning", () => {
+    const main = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const macroBody = parse(`Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Entry"
+   bCanHaveOutputs=True
+   NodeGuid=BBBB0001000000000000000000000001
+   CustomProperties Pin (PinId=EEEE1111111111111111111111111111,PinName="Array",PinType.PinCategory="wildcard",PinType.ContainerType=Array,Direction="EGPD_Output",LinkedTo=())
+   CustomProperties Pin (PinId=EEEE2222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_Body 33334444555566667777888899990000,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_Body"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=BBBB0002000000000000000000000002
+   CustomProperties Pin (PinId=33334444555566667777888899990000,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Tunnel_Entry EEEE2222222222222222222222222222,))
+   CustomProperties Pin (PinId=33334444555566667777888899990001,PinName="InString",PinType.PinCategory="string",DefaultValue="from macro body")
+End Object`);
+    const md = renderMarkdown(main, [
+      { name: "MyCoolMacro", kind: "macro", graph: macroBody },
+    ]);
+    expect(md).toMatch(/## Macro: MyCoolMacro/);
+    expect(md).toMatch(/from macro body/);
+    expect(md).not.toMatch(/Warnings:[\s\S]*MyCoolMacro/);
+  });
 });
 
 describe("structured renderers", () => {

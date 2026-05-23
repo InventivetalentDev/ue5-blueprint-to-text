@@ -4,6 +4,9 @@ import { parseStructFields, stripQuotes } from "../../parser/properties";
 export interface FormatContext {
   resolveInput: (pin: Pin) => string;
   outputPinName?: string;
+  /** Names of macros/functions whose body the user has also pasted, so we
+   * shouldn't warn about them being missing. */
+  knownDefinitions?: Set<string>;
 }
 
 export interface FormattedNode {
@@ -114,6 +117,14 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
       heading: `function ${name}`,
     };
   }
+  if (cls.includes("K2Node_Tunnel")) {
+    const isEntry =
+      stripQuotes(node.properties.bCanHaveOutputs ?? "False") === "True";
+    return {
+      statement: isEntry ? "entry" : "exit",
+      heading: isEntry ? "Entry" : "Exit",
+    };
+  }
   if (cls.includes("K2Node_CallFunction")) {
     const ref = extractMemberRef(node.properties.FunctionReference ?? "");
     const target = ref.parent ?? "self";
@@ -155,7 +166,11 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
       (p) => p.direction === "output" && isExecPin(p),
     );
     const warnings: string[] = [];
-    if (ref.assetPath && !ref.isEngine) {
+    if (
+      ref.assetPath &&
+      !ref.isEngine &&
+      !ctx.knownDefinitions?.has(macroName)
+    ) {
       warnings.push(
         `Macro \`${macroName}\` is custom (${ref.assetPath}) — its body is not in the paste; only the call site is shown. Paste its graph separately to include the body.`,
       );

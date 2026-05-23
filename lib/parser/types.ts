@@ -48,3 +48,9 @@ export interface ParsedGraph {
   edges: Edge[];
   warnings: string[];
 }
+
+export interface MacroFunctionDefinition {
+  name: string;
+  kind: "macro" | "function";
+  graph: ParsedGraph;
+}

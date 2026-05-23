@@ -1,5 +1,10 @@
 import YAML from "yaml";
-import type { ParsedGraph, Pin, T3DNode } from "../parser/types";
+import type {
+  MacroFunctionDefinition,
+  ParsedGraph,
+  Pin,
+  T3DNode,
+} from "../parser/types";
 
 interface SerializedPin {
   id: string;
@@ -21,11 +26,20 @@ interface SerializedNode {
   raw: string;
 }
 
+interface SerializedDefinition {
+  name: string;
+  kind: "macro" | "function";
+  nodes: SerializedNode[];
+  edges: ParsedGraph["edges"];
+  warnings: string[];
+}
+
 interface SerializedGraph {
   kind: ParsedGraph["kind"];
   warnings: string[];
   nodes: SerializedNode[];
   edges: ParsedGraph["edges"];
+  definitions?: SerializedDefinition[];
 }
 
 function serializeNode(n: T3DNode): SerializedNode {
@@ -48,19 +62,37 @@ function serializeNode(n: T3DNode): SerializedNode {
   };
 }
 
-export function toSerializedGraph(graph: ParsedGraph): SerializedGraph {
+export function toSerializedGraph(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): SerializedGraph {
   return {
     kind: graph.kind,
     warnings: graph.warnings,
     nodes: graph.nodes.map(serializeNode),
     edges: graph.edges,
+    definitions: definitions.length
+      ? definitions.map((d) => ({
+          name: d.name,
+          kind: d.kind,
+          nodes: d.graph.nodes.map(serializeNode),
+          edges: d.graph.edges,
+          warnings: d.graph.warnings,
+        }))
+      : undefined,
   };
 }
 
-export function renderYaml(graph: ParsedGraph): string {
-  return YAML.stringify(toSerializedGraph(graph), { lineWidth: 0 });
+export function renderYaml(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): string {
+  return YAML.stringify(toSerializedGraph(graph, definitions), { lineWidth: 0 });
 }
 
-export function renderJson(graph: ParsedGraph): string {
-  return JSON.stringify(toSerializedGraph(graph), null, 2);
+export function renderJson(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): string {
+  return JSON.stringify(toSerializedGraph(graph, definitions), null, 2);
 }

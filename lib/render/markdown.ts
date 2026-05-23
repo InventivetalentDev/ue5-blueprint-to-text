@@ -1,4 +1,10 @@
-import type { Edge, ParsedGraph, Pin, T3DNode } from "../parser/types";
+import type {
+  Edge,
+  MacroFunctionDefinition,
+  ParsedGraph,
+  Pin,
+  T3DNode,
+} from "../parser/types";
 import { parseStructFields, stripQuotes, unwrapParens } from "../parser/properties";
 import { formatBlueprintNode, isExecPin, shortClassName } from "./nodeFormatters/blueprint";
 import { exprFriendlyName, formatMaterialExpression } from "./nodeFormatters/material";
@@ -35,9 +41,12 @@ function indexGraph(graph: ParsedGraph): GraphIndex {
   return { nodes, incomingByPin, outgoingByPin, nodesWithIncomingExec };
 }
 
-export function renderMarkdown(graph: ParsedGraph): string {
+export function renderMarkdown(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): string {
   if (graph.kind === "material") return renderMaterial(graph);
-  return renderBlueprint(graph);
+  return renderBlueprint(graph, definitions);
 }
 
 /* ------------------------------ Blueprint ------------------------------ */
@@ -148,6 +157,7 @@ function renderDataExpression(
   outputPinName: string,
   idx: GraphIndex,
   visiting: Set<string>,
+  knownDefinitions: Set<string> = new Set(),
 ): string {
   if (visiting.has(node.name)) return node.name;
   visiting.add(node.name);
@@ -155,6 +165,7 @@ function renderDataExpression(
     const formatted = formatBlueprintNode(node, {
       resolveInput: (pin) => resolvePinInput(pin, node, idx, visiting),
       outputPinName,
+      knownDefinitions,
     });
     if (formatted.expression !== undefined) return formatted.expression;
     // Default: NodeShortName.outputPin
@@ -170,6 +181,7 @@ function renderExecChain(
   depth: number,
   seen: Set<string>,
   warnings: string[],
+  knownDefinitions: Set<string>,
 ): string[] {
   const lines: string[] = [];
   let current: T3DNode | undefined = start;
@@ -181,6 +193,7 @@ function renderExecChain(
     seen.add(current.name);
     const formatted = formatBlueprintNode(current, {
       resolveInput: (pin) => resolvePinInput(pin, current!, idx, new Set()),
+      knownDefinitions,
     });
     if (formatted.warnings) warnings.push(...formatted.warnings);
     lines.push(`${"  ".repeat(depth)}- ${formatted.statement}`);
@@ -195,7 +208,10 @@ function renderExecChain(
           const outs = idx.outgoingByPin.get(outPin.id) ?? [];
           for (const edge of outs) {
             const next = idx.nodes.get(edge.to.nodeName);
-            if (next) lines.push(...renderExecChain(next, idx, depth + 2, seen, warnings));
+            if (next)
+              lines.push(
+                ...renderExecChain(next, idx, depth + 2, seen, warnings, knownDefinitions),
+              );
           }
         }
       }
@@ -214,51 +230,100 @@ function renderExecChain(
   return lines;
 }
 
-function renderBlueprint(graph: ParsedGraph): string {
+/** Renders the inner content of a blueprint-kind graph — section bodies but
+ * no top-level heading or warnings block. */
+function renderBlueprintBody(
+  graph: ParsedGraph,
+  knownDefinitions: Set<string>,
+  headingLevel: "##" | "###",
+): { lines: string[]; warnings: string[] } {
   const idx = indexGraph(graph);
   const roots = findExecRoots(graph, idx);
   const runtimeWarnings: string[] = [];
-  const body: string[] = [];
+  const lines: string[] = [];
 
   const allVisited = new Set<string>();
   for (const root of roots) {
-    body.push(`## ${rootHeading(root)}`);
-    body.push("");
-    const chain = renderExecChain(root, idx, 0, allVisited, runtimeWarnings);
-    body.push(...chain);
-    body.push("");
+    lines.push(`${headingLevel} ${rootHeading(root)}`);
+    lines.push("");
+    const chain = renderExecChain(
+      root,
+      idx,
+      0,
+      allVisited,
+      runtimeWarnings,
+      knownDefinitions,
+    );
+    lines.push(...chain);
+    lines.push("");
   }
-  // Orphan data nodes (no exec, not visited)
   const orphans = graph.nodes.filter(
     (n) => !allVisited.has(n.name) && !n.pins.some((p) => isExecPin(p)),
   );
   if (orphans.length > 0) {
-    body.push(`## Data nodes`);
-    body.push("");
+    lines.push(`${headingLevel} Data nodes`);
+    lines.push("");
     for (const n of orphans) {
       const formatted = formatBlueprintNode(n, {
         resolveInput: (pin) => resolvePinInput(pin, n, idx, new Set()),
+        knownDefinitions,
       });
       if (formatted.warnings) runtimeWarnings.push(...formatted.warnings);
-      body.push(`- \`${n.name}\`: ${formatted.statement}`);
+      lines.push(`- \`${n.name}\`: ${formatted.statement}`);
     }
-    body.push("");
+    lines.push("");
+  }
+  return { lines, warnings: runtimeWarnings };
+}
+
+function renderBlueprint(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): string {
+  const knownDefinitions = new Set(definitions.map((d) => d.name));
+  const main = renderBlueprintBody(graph, knownDefinitions, "##");
+
+  const definitionSections: string[] = [];
+  const definitionWarnings: string[] = [];
+  for (const def of definitions) {
+    const label = def.kind === "macro" ? "Macro" : "Function";
+    definitionSections.push(`## ${label}: ${def.name}`);
+    definitionSections.push("");
+    if (def.graph.nodes.length === 0) {
+      definitionSections.push(`*(empty paste)*`);
+      definitionSections.push("");
+      continue;
+    }
+    const sub = renderBlueprintBody(def.graph, knownDefinitions, "###");
+    definitionSections.push(...sub.lines);
+    definitionWarnings.push(
+      ...def.graph.warnings.map((w) => `[${def.name}] ${w}`),
+      ...sub.warnings.map((w) => `[${def.name}] ${w}`),
+    );
   }
 
   const out: string[] = [];
   out.push(`# Blueprint Graph`);
   out.push("");
-  const allWarnings = [...graph.warnings, ...dedupe(runtimeWarnings)];
+  const allWarnings = [
+    ...graph.warnings,
+    ...dedupe(main.warnings),
+    ...dedupe(definitionWarnings),
+  ];
   if (allWarnings.length) {
     out.push(`> Warnings:`);
     for (const w of allWarnings) out.push(`> - ${w}`);
     out.push("");
   }
-  if (roots.length === 0) {
+  if (main.lines.length === 0) {
     out.push(`*No event/root nodes found.*`);
     out.push("");
+  } else {
+    out.push(...main.lines);
   }
-  out.push(...body);
+  if (definitionSections.length > 0) {
+    out.push(...definitionSections);
+  }
   return out.join("\n").trim() + "\n";
 }
 
