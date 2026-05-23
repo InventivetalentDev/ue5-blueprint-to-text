@@ -1,9 +1,12 @@
-import type { Pin, T3DNode } from "../../parser/types";
+import type { ParsedGraph, Pin, T3DNode } from "../../parser/types";
 import { parseStructFields, stripQuotes } from "../../parser/properties";
 
 export interface FormatContext {
   resolveInput: (pin: Pin) => string;
   outputPinName?: string;
+  /** Names of macros/functions whose body the user has also pasted, so we
+   * shouldn't warn about them being missing. */
+  knownDefinitions?: Set<string>;
 }
 
 export interface FormattedNode {
@@ -11,6 +14,7 @@ export interface FormattedNode {
   expression?: string;
   heading?: string;
   branches?: { pinName: string; label: string }[];
+  warnings?: string[];
 }
 
 export function isExecPin(pin: Pin): boolean {
@@ -26,16 +30,89 @@ function extractMemberRef(raw: string): { parent?: string; name?: string } {
   if (!raw) return {};
   const fields = parseStructFields(raw.replace(/^\(/, "").replace(/\)$/, ""));
   const memberName = fields.MemberName ? stripQuotes(fields.MemberName) : undefined;
-  const parentRaw = fields.MemberParent;
+  const selfContext =
+    fields.bSelfContext && stripQuotes(fields.bSelfContext) === "True";
   let parent: string | undefined;
-  if (parentRaw) {
-    const m = parentRaw.match(/['"]([^'"]+)['"]/);
-    if (m) {
-      const last = m[1].split(/[\/.]/).pop();
-      parent = last;
-    }
+  if (selfContext) {
+    parent = "self";
+  } else if (fields.MemberParent) {
+    parent = parseClassPathTail(fields.MemberParent);
   }
   return { parent, name: memberName };
+}
+
+/**
+ * Pulls the trailing identifier out of a UE class reference like:
+ *   Class'"/Script/Engine.KismetSystemLibrary"'
+ *   BlueprintGeneratedClass'/Game/Blueprints/BP_Foo.BP_Foo_C'
+ *   "/Script/Engine.Actor"
+ * Returns just `KismetSystemLibrary`, `BP_Foo_C`, `Actor`. Avoids returning
+ * the wrapping `Class` token by preferring path-like substrings.
+ */
+function parseClassPathTail(raw: string): string | undefined {
+  const stripped = raw.replace(/['"]/g, "");
+  // Prefer the segment after the last `.`, `/`, or `:` separator.
+  const m = stripped.match(/[\/.:]([A-Za-z0-9_]+)\s*$/);
+  if (m) return m[1];
+  const tokens = stripped.split(/[\s/.:]+/).filter(Boolean);
+  return tokens[tokens.length - 1];
+}
+
+/**
+ * Parses a `MacroGraphReference=(MacroGraph=...,GraphBlueprint=...)` value
+ * into its macro name and owning-asset path. Handles both shapes UE has
+ * emitted over the years:
+ *
+ *   MacroGraph=EdGraph'"/Engine/.../StandardMacros.StandardMacros:ForEachLoop"'
+ *   MacroGraph="/Script/Engine.EdGraph'MacroName'"
+ *
+ * In the second form the asset path lives on the sibling `GraphBlueprint`
+ * field instead of being suffixed onto the MacroGraph value.
+ */
+export function extractGraphRef(
+  raw: string,
+): { assetPath?: string; graphName?: string; isEngine?: boolean } {
+  if (!raw) return {};
+  const fields = parseStructFields(raw.replace(/^\(/, "").replace(/\)$/, ""));
+  const graphRef = fields.MacroGraph ?? fields.GraphReference;
+  if (!graphRef) return {};
+
+  // Peel off a single layer of outer double quotes if present.
+  let working = graphRef.trim();
+  if (working.startsWith('"') && working.endsWith('"')) {
+    working = working.slice(1, -1);
+  }
+
+  // The innermost reference is whatever sits between the deepest quote pair.
+  const innerDouble = working.match(/"([^"]+)"/)?.[1];
+  const innerSingle = working.match(/'([^']+)'/)?.[1];
+  const inner = innerDouble ?? innerSingle ?? working;
+
+  let assetPath: string | undefined;
+  let graphName: string | undefined;
+  if (inner.includes(":")) {
+    const colonIdx = inner.lastIndexOf(":");
+    assetPath = inner.slice(0, colonIdx);
+    graphName = inner.slice(colonIdx + 1);
+  } else if (inner.startsWith("/")) {
+    assetPath = inner;
+  } else {
+    graphName = inner;
+    // Asset path lives on the GraphBlueprint sibling in this format.
+    const bpRaw = fields.GraphBlueprint;
+    if (bpRaw) {
+      let bp = bpRaw.trim();
+      if (bp.startsWith('"') && bp.endsWith('"')) bp = bp.slice(1, -1);
+      assetPath =
+        bp.match(/'([^']+)'/)?.[1] ?? bp.match(/"([^"]+)"/)?.[1] ?? bp;
+    }
+  }
+
+  return {
+    assetPath,
+    graphName,
+    isEngine: assetPath?.startsWith("/Engine/") ?? false,
+  };
 }
 
 function inputPins(node: T3DNode, opts?: { skipFirstExec?: boolean; skipSelf?: boolean }): Pin[] {
@@ -72,6 +149,7 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `Event ${name}`,
       heading: `Event ${name}${ref.parent ? ` (from ${ref.parent})` : ""}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
     };
   }
   if (cls.includes("K2Node_CustomEvent")) {
@@ -79,6 +157,7 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `CustomEvent ${name}`,
       heading: `CustomEvent ${name}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
     };
   }
   if (cls.includes("K2Node_FunctionEntry")) {
@@ -87,6 +166,40 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `function ${name}()`,
       heading: `function ${name}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
+    };
+  }
+  if (cls.includes("K2Node_Tunnel")) {
+    const isEntry =
+      stripQuotes(node.properties.bCanHaveOutputs ?? "False") === "True";
+    const label = isEntry ? "entry" : "exit";
+    return {
+      statement: label,
+      heading: isEntry ? "Entry" : "Exit",
+      expression: ctx.outputPinName ? `${label}.${ctx.outputPinName}` : label,
+    };
+  }
+  if (cls.includes("K2Node_Knot")) {
+    // Reroute / passthrough — just forward the input value through.
+    const dataIn = node.pins.find(
+      (p) => p.direction === "input" && !isExecPin(p),
+    );
+    if (dataIn) {
+      const value = ctx.resolveInput(dataIn);
+      return { statement: value, expression: value };
+    }
+    return { statement: "(knot)", expression: "" };
+  }
+  if (cls.includes("K2Node_BreakStruct") || cls.includes("K2Node_BreakStructure")) {
+    const structInput = node.pins.find(
+      (p) => p.direction === "input" && !isExecPin(p),
+    );
+    const structValue = structInput ? ctx.resolveInput(structInput) : "?";
+    return {
+      statement: `break ${structValue}`,
+      expression: ctx.outputPinName
+        ? `${structValue}.${ctx.outputPinName}`
+        : `break(${structValue})`,
     };
   }
   if (cls.includes("K2Node_CallFunction")) {
@@ -119,6 +232,26 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
       .filter((p) => p.direction === "output" && isExecPin(p))
       .map((p) => ({ pinName: p.name, label: p.name }));
     return { statement: `sequence`, branches };
+  }
+  if (cls.includes("K2Node_MacroInstance")) {
+    const ref = extractGraphRef(node.properties.MacroGraphReference ?? "");
+    const macroName = ref.graphName ?? "Macro";
+    const args = inputPins(node, { skipFirstExec: true, skipSelf: true }).map(
+      (p) => `${p.name}=${ctx.resolveInput(p)}`,
+    );
+    const execOutputs = node.pins.filter(
+      (p) => p.direction === "output" && isExecPin(p),
+    );
+    return {
+      statement: `${macroName}(${args.join(", ")})`,
+      expression: ctx.outputPinName
+        ? `${macroName}.${ctx.outputPinName}`
+        : macroName,
+      branches:
+        execOutputs.length >= 2
+          ? execOutputs.map((p) => ({ pinName: p.name, label: p.name }))
+          : undefined,
+    };
   }
   if (cls.includes("K2Node_VariableGet")) {
     const ref = extractMemberRef(node.properties.VariableReference ?? "");
@@ -189,4 +322,26 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     statement: args ? `${short}(${args})` : short,
     expression: args ? `${short}(${args})` : short,
   };
+}
+
+/** Walks the graph for warnings that should surface regardless of which
+ * output format the user picks — currently just "custom macro body not in
+ * paste". Independent of the per-node formatter pass so YAML/JSON output
+ * gets the same warnings as Markdown. */
+export function collectMacroWarnings(
+  graph: ParsedGraph,
+  knownDefinitions: Set<string>,
+): string[] {
+  const out = new Set<string>();
+  for (const node of graph.nodes) {
+    if (!node.className.includes("K2Node_MacroInstance")) continue;
+    const ref = extractGraphRef(node.properties.MacroGraphReference ?? "");
+    const macroName = ref.graphName ?? "Macro";
+    if (!ref.assetPath || ref.isEngine || knownDefinitions.has(macroName))
+      continue;
+    out.add(
+      `Macro \`${macroName}\` is custom (${ref.assetPath}) — its body is not in the paste; only the call site is shown. Paste its graph separately to include the body.`,
+    );
+  }
+  return [...out];
 }

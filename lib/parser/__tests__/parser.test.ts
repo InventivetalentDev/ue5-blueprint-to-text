@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../graph";
 import { parseValue, parseStructFields, stripQuotes } from "../properties";
+import { detectDefinitionInfo } from "../detect";
 
 const BP_SAMPLE = `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
    EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
@@ -81,5 +82,33 @@ End Object`;
   it("respects kind override", () => {
     const g = parse(BP_SAMPLE, "material");
     expect(g.kind).toBe("material");
+  });
+});
+
+describe("detectDefinitionInfo", () => {
+  it("pulls the macro name from a K2Node_Tunnel ExportPath", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_0" ExportPath="/Script/BlueprintGraph.K2Node_Tunnel'/Game/BP_SnowManager.BP_SnowManager:CornerToVec2D.K2Node_Tunnel_0'"
+   bCanHaveOutputs=True
+   NodeGuid=AAAA0001000000000000000000000001
+End Object`;
+    expect(detectDefinitionInfo(t3d)).toEqual({
+      name: "CornerToVec2D",
+      kind: "macro",
+    });
+  });
+
+  it("pulls the function name from a K2Node_FunctionEntry ExportPath", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_FunctionEntry Name="K2Node_FunctionEntry_0" ExportPath="/Script/BlueprintGraph.K2Node_FunctionEntry'/Game/BP_Thing.BP_Thing:DrawDebugArrowDown.K2Node_FunctionEntry_0'"
+   NodeGuid=BBBB0001000000000000000000000001
+End Object`;
+    expect(detectDefinitionInfo(t3d)).toEqual({
+      name: "DrawDebugArrowDown",
+      kind: "function",
+    });
+  });
+
+  it("returns nothing when there is no tunnel/entry node", () => {
+    expect(detectDefinitionInfo("")).toEqual({});
+    expect(detectDefinitionInfo("some random text")).toEqual({});
   });
 });

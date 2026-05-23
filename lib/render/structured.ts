@@ -1,5 +1,12 @@
 import YAML from "yaml";
-import type { ParsedGraph, Pin, T3DNode } from "../parser/types";
+import type {
+  MacroFunctionDefinition,
+  ParsedGraph,
+  Pin,
+  T3DNode,
+} from "../parser/types";
+import { collectMacroWarnings } from "./nodeFormatters/blueprint";
+import { collectAllWarnings, type RenderResult } from "./markdown";
 
 interface SerializedPin {
   id: string;
@@ -21,11 +28,20 @@ interface SerializedNode {
   raw: string;
 }
 
+interface SerializedDefinition {
+  name: string;
+  kind: "macro" | "function";
+  nodes: SerializedNode[];
+  edges: ParsedGraph["edges"];
+  warnings: string[];
+}
+
 interface SerializedGraph {
   kind: ParsedGraph["kind"];
   warnings: string[];
   nodes: SerializedNode[];
   edges: ParsedGraph["edges"];
+  definitions?: SerializedDefinition[];
 }
 
 function serializeNode(n: T3DNode): SerializedNode {
@@ -48,19 +64,52 @@ function serializeNode(n: T3DNode): SerializedNode {
   };
 }
 
-export function toSerializedGraph(graph: ParsedGraph): SerializedGraph {
+export function toSerializedGraph(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): SerializedGraph {
+  const knownDefinitions = new Set(definitions.map((d) => d.name));
   return {
     kind: graph.kind,
-    warnings: graph.warnings,
+    warnings: [
+      ...graph.warnings,
+      ...collectMacroWarnings(graph, knownDefinitions),
+    ],
     nodes: graph.nodes.map(serializeNode),
     edges: graph.edges,
+    definitions: definitions.length
+      ? definitions.map((d) => ({
+          name: d.name,
+          kind: d.kind,
+          nodes: d.graph.nodes.map(serializeNode),
+          edges: d.graph.edges,
+          warnings: [
+            ...d.graph.warnings,
+            ...collectMacroWarnings(d.graph, knownDefinitions),
+          ],
+        }))
+      : undefined,
   };
 }
 
-export function renderYaml(graph: ParsedGraph): string {
-  return YAML.stringify(toSerializedGraph(graph), { lineWidth: 0 });
+export function renderYaml(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): RenderResult {
+  return {
+    output: YAML.stringify(toSerializedGraph(graph, definitions), {
+      lineWidth: 0,
+    }),
+    warnings: collectAllWarnings(graph, definitions),
+  };
 }
 
-export function renderJson(graph: ParsedGraph): string {
-  return JSON.stringify(toSerializedGraph(graph), null, 2);
+export function renderJson(
+  graph: ParsedGraph,
+  definitions: MacroFunctionDefinition[] = [],
+): RenderResult {
+  return {
+    output: JSON.stringify(toSerializedGraph(graph, definitions), null, 2),
+    warnings: collectAllWarnings(graph, definitions),
+  };
 }

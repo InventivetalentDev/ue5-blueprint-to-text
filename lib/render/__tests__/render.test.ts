@@ -34,7 +34,7 @@ End Object`;
 describe("renderMarkdown — blueprint", () => {
   it("renders the event header and call chain", () => {
     const g = parse(BP);
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Blueprint Graph/);
     expect(md).toMatch(/Event ReceiveBeginPlay/);
     expect(md).toMatch(/PrintString/);
@@ -46,7 +46,7 @@ describe("renderMarkdown — material", () => {
   it("emits a BaseColor = expression", () => {
     const g = parse(MAT);
     expect(g.kind).toBe("material");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Material Graph/);
     expect(md).toMatch(/BaseColor = /);
   });
@@ -80,7 +80,7 @@ Begin Object Class=/Script/UnrealEd.MaterialGraphNode_Root Name="MaterialGraphNo
 End Object`;
     const g = parse(wrapped);
     expect(g.kind).toBe("material");
-    const md = renderMarkdown(g);
+    const md = renderMarkdown(g).output;
     expect(md).toMatch(/# Material Graph/);
     expect(md).toMatch(/BaseColor = /);
     // The Multiply expression should appear, not the bare "MaterialGraphNode" wrapper
@@ -90,17 +90,275 @@ End Object`;
   });
 });
 
+describe("renderMarkdown — macros", () => {
+  const macroBP = (assetPath: string, graphName: string) => `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_MacroInstance_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_MacroInstance Name="K2Node_MacroInstance_0"
+   MacroGraphReference=(MacroGraph=EdGraph'"${assetPath}:${graphName}"',GraphBlueprint=Blueprint'"${assetPath}"',GraphGuid=DEAD0000000000000000000000000001)
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="Array",PinType.PinCategory="wildcard",PinType.ContainerType=Array,Direction="EGPD_Input")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="LoopBody",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="ArrayElement",PinType.PinCategory="wildcard",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="ArrayIndex",PinType.PinCategory="int",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=77777777777777777777777777777777,PinName="Completed",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+End Object`;
+
+  it("renders engine macros with the macro name and exec branches", () => {
+    const g = parse(
+      macroBP(
+        "/Engine/EditorBlueprintResources/StandardMacros.StandardMacros",
+        "ForEachLoop",
+      ),
+    );
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/ForEachLoop\(/);
+    expect(md).toMatch(/LoopBody:/);
+    expect(md).toMatch(/Completed:/);
+    // No warning for engine macros
+    expect(md).not.toMatch(/is custom/);
+  });
+
+  it("warns when a custom macro body is not in the paste", () => {
+    const g = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const rendered = renderMarkdown(g);
+    expect(rendered.output).toMatch(/MyCoolMacro\(/);
+    expect(rendered.output).toMatch(/Warnings:/);
+    expect(rendered.output).toMatch(/MyCoolMacro.*custom.*BP_MyLib/);
+    // The same warning must be surfaced via the return value too so the
+    // UI panel can show it without re-parsing the Markdown.
+    expect(rendered.warnings.some((w) => /MyCoolMacro.*custom/.test(w))).toBe(
+      true,
+    );
+  });
+
+  it("surfaces macro warnings on YAML and JSON outputs too", () => {
+    const g = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const y = renderYaml(g);
+    const j = renderJson(g);
+    expect(y.warnings.some((w) => /MyCoolMacro/.test(w))).toBe(true);
+    expect(j.warnings.some((w) => /MyCoolMacro/.test(w))).toBe(true);
+    // And the structured `warnings:` field in the serialized output too.
+    expect(y.output).toMatch(/MyCoolMacro/);
+    expect(j.output).toMatch(/MyCoolMacro/);
+  });
+
+  it("renders a supplied macro body in its own section and drops the warning", () => {
+    const main = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const macroBody = parse(`Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Entry"
+   bCanHaveOutputs=True
+   NodeGuid=BBBB0001000000000000000000000001
+   CustomProperties Pin (PinId=EEEE1111111111111111111111111111,PinName="Array",PinType.PinCategory="wildcard",PinType.ContainerType=Array,Direction="EGPD_Output",LinkedTo=())
+   CustomProperties Pin (PinId=EEEE2222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_Body 33334444555566667777888899990000,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_Body"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=BBBB0002000000000000000000000002
+   CustomProperties Pin (PinId=33334444555566667777888899990000,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Tunnel_Entry EEEE2222222222222222222222222222,))
+   CustomProperties Pin (PinId=33334444555566667777888899990001,PinName="InString",PinType.PinCategory="string",DefaultValue="from macro body")
+End Object`);
+    const md = renderMarkdown(main, [
+      { name: "MyCoolMacro", kind: "macro", graph: macroBody },
+    ]).output;
+    expect(md).toMatch(/## Macro: MyCoolMacro/);
+    expect(md).toMatch(/from macro body/);
+    expect(md).not.toMatch(/Warnings:[\s\S]*MyCoolMacro/);
+  });
+});
+
+describe("renderMarkdown — tunnels", () => {
+  it("does not treat an exit tunnel as its own root section", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Entry"
+   bCanHaveOutputs=True
+   NodeGuid=BBBB0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=BBBB0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Tunnel_Entry 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_Tunnel_Exit 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_Tunnel Name="K2Node_Tunnel_Exit"
+   bCanHaveInputs=True
+   NodeGuid=BBBB0003000000000000000000000003
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_CallFunction_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    // The exit tunnel must not become its own heading
+    expect(md.match(/## Exit/g)).toBeNull();
+    expect(md.match(/loop back to K2Node_Tunnel_Exit/g)).toBeNull();
+    // The entry chain still walks through to the exit
+    expect(md).toMatch(/## Entry/);
+    expect(md).toMatch(/PrintString/);
+    expect(md).toMatch(/- exit/);
+  });
+});
+
+describe("extractMemberRef robustness", () => {
+  it("extracts the trailing class name even with Class' wrapper", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=CCCC0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/KismetSystemLibrary\.PrintString/);
+  });
+
+  it("renders bSelfContext=True calls as self.<name>", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberName="MyLocalFunc",bSelfContext=True)
+   NodeGuid=CCCC0002000000000000000000000002
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/self\.MyLocalFunc/);
+  });
+});
+
+describe("renderMarkdown — MacroGraphReference formats", () => {
+  const bpWithRef = (ref: string) => `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=DDDD0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_MacroInstance_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_MacroInstance Name="K2Node_MacroInstance_0"
+   MacroGraphReference=${ref}
+   NodeGuid=DDDD0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+End Object`;
+
+  it("parses inner-single-quote format with sibling GraphBlueprint", () => {
+    const g = parse(
+      bpWithRef(
+        `(MacroGraph="/Script/Engine.EdGraph'DrawDebugArrowDown'",GraphBlueprint="/Script/Engine.Blueprint'/Game/BP_SnowManager.BP_SnowManager'",GraphGuid=FA23934F4198BC9F0A99B88D89B778FA)`,
+      ),
+    );
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/DrawDebugArrowDown\(/);
+    expect(md).toMatch(/BP_SnowManager/);
+  });
+
+  it("still parses the colon-suffix format used by engine macros", () => {
+    const g = parse(
+      bpWithRef(
+        `(MacroGraph=EdGraph'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoop"',GraphBlueprint=Blueprint'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"',GraphGuid=DEAD)`,
+      ),
+    );
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/ForEachLoop\(/);
+    expect(md).not.toMatch(/Warnings:[\s\S]*ForEachLoop/);
+  });
+});
+
+describe("renderMarkdown — Knot and BreakStruct transparency", () => {
+  it("inlines K2Node_Knot value into downstream args", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_0"
+   VariableReference=(MemberName="MyVar",bSelfContext=True)
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="MyVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_Knot_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_Knot Name="K2Node_Knot_0"
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="InputPin",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="OutputPin",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetMathLibrary"',MemberName="Add_IntInt")
+   NodeGuid=AAAA0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_Knot_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    // The knot wrapper should not appear; the variable name shows through.
+    expect(md).toMatch(/A=MyVar/);
+    expect(md).not.toMatch(/Knot\(InputPin=/);
+  });
+
+  it("renders BreakStruct field access via the output pin name", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_0"
+   VariableReference=(MemberName="MyVec",bSelfContext=True)
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="MyVec",PinType.PinCategory="struct",Direction="EGPD_Output",LinkedTo=(K2Node_BreakStruct_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_BreakStruct Name="K2Node_BreakStruct_0"
+   StructType=/Script/CoreUObject.Vector
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="MyVec",PinType.PinCategory="struct",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="X",PinType.PinCategory="real",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetMathLibrary"',MemberName="Abs_Double")
+   NodeGuid=AAAA0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="real",Direction="EGPD_Input",LinkedTo=(K2Node_BreakStruct_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/A=MyVec\.X/);
+  });
+});
+
+describe("Data nodes orphan filter", () => {
+  it("does not list a data node that was already inlined in an exec line", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=DDDD0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_Used"
+   VariableReference=(MemberName="MyVar",bSelfContext=True)
+   NodeGuid=DDDD0002000000000000000000000002
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="MyVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_Stray"
+   VariableReference=(MemberName="LooseVar",bSelfContext=True)
+   NodeGuid=DDDD0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="LooseVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=())
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=DDDD0004000000000000000000000004
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="InString",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_Used 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    // Used variable was inlined into the call args, so the orphan list
+    // shouldn't repeat it.
+    expect(md).toMatch(/InString=MyVar/);
+    expect(md).not.toMatch(/K2Node_VariableGet_Used/);
+    // The stray variable still appears under Data nodes.
+    expect(md).toMatch(/## Data nodes/);
+    expect(md).toMatch(/LooseVar/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);
-    const y = renderYaml(g);
+    const y = renderYaml(g).output;
     expect(y).toMatch(/kind: blueprint/);
     expect(y).toMatch(/K2Node_Event_0/);
     expect(y).toMatch(/edges:/);
   });
   it("renderJson round-trips via JSON.parse", () => {
     const g = parse(BP);
-    const j = renderJson(g);
+    const j = renderJson(g).output;
     const obj = JSON.parse(j);
     expect(obj.kind).toBe("blueprint");
     expect(obj.nodes).toHaveLength(2);
