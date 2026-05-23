@@ -25,35 +25,56 @@ End Object`,
   },
   {
     label: "Material: TextureSample * Color -> BaseColor",
-    value: `Begin Object Class=/Script/Engine.MaterialExpressionTextureSampleParameter2D Name="MaterialExpressionTextureSampleParameter2D_0"
-   ParameterName="BaseColorTex"
-   MaterialExpressionEditorX=-352
-   MaterialExpressionEditorY=0
-   MaterialExpressionGuid=BBBB0001000000000000000000000001
-   CustomProperties Pin (PinId=AAAA1000000000000000000000000001,PinName="UVs",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=())
-   CustomProperties Pin (PinId=AAAA1000000000000000000000000002,PinName="RGB",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_Multiply_0 AAAA2000000000000000000000000001,))
+    value: `Begin Object Class=/Script/UnrealEd.MaterialGraphNode Name="MaterialGraphNode_0"
+   Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialExpressionMultiply_0"
+   End Object
+   Begin Object Name="MaterialExpressionMultiply_0"
+      MaterialExpressionEditorX=-128
+      MaterialExpressionEditorY=0
+      MaterialExpressionGuid=BBBB0001000000000000000000000001
+   End Object
+   MaterialExpression=MaterialExpressionMultiply'"MaterialExpressionMultiply_0"'
+   NodePosX=-128
+   NodePosY=0
+   NodeGuid=CCCC0001000000000000000000000001
+   CustomProperties Pin (PinId=AAAA0001000000000000000000000001,PinName="A",PinType.PinCategory="materialinput",PinType.PinSubCategoryObject=None,PinType.ContainerType=None,PinType.bIsReference=False,Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_1 AAAA0002000000000000000000000002,))
+   CustomProperties Pin (PinId=AAAA0001000000000000000000000003,PinName="B",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_2 AAAA0003000000000000000000000004,))
+   CustomProperties Pin (PinId=AAAA0001000000000000000000000005,PinName="Output",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_Root_0 AAAA0004000000000000000000000006,))
 End Object
-Begin Object Class=/Script/Engine.MaterialExpressionMultiply Name="MaterialGraphNode_Multiply_0"
-   MaterialExpressionEditorX=-128
-   MaterialExpressionEditorY=0
-   MaterialExpressionGuid=BBBB0002000000000000000000000002
-   CustomProperties Pin (PinId=AAAA2000000000000000000000000001,PinName="A",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialExpressionTextureSampleParameter2D_0 AAAA1000000000000000000000000002,))
-   CustomProperties Pin (PinId=AAAA2000000000000000000000000002,PinName="B",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialExpressionVectorParameter_0 AAAA3000000000000000000000000001,))
-   CustomProperties Pin (PinId=AAAA2000000000000000000000000003,PinName="Output",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_Root_0 AAAA4000000000000000000000000001,))
+Begin Object Class=/Script/UnrealEd.MaterialGraphNode Name="MaterialGraphNode_1"
+   Begin Object Class=/Script/Engine.MaterialExpressionTextureSampleParameter2D Name="MaterialExpressionTextureSampleParameter2D_0"
+   End Object
+   Begin Object Name="MaterialExpressionTextureSampleParameter2D_0"
+      ParameterName="BaseColorTex"
+      MaterialExpressionEditorX=-384
+      MaterialExpressionGuid=BBBB0002000000000000000000000002
+   End Object
+   MaterialExpression=MaterialExpressionTextureSampleParameter2D'"MaterialExpressionTextureSampleParameter2D_0"'
+   NodePosX=-384
+   NodeGuid=CCCC0002000000000000000000000002
+   CustomProperties Pin (PinId=AAAA0002000000000000000000000002,PinName="RGB",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_0 AAAA0001000000000000000000000001,))
 End Object
-Begin Object Class=/Script/Engine.MaterialExpressionVectorParameter Name="MaterialExpressionVectorParameter_0"
-   ParameterName="Tint"
-   MaterialExpressionEditorX=-352
-   MaterialExpressionEditorY=128
-   MaterialExpressionGuid=BBBB0003000000000000000000000003
-   CustomProperties Pin (PinId=AAAA3000000000000000000000000001,PinName="RGB",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_Multiply_0 AAAA2000000000000000000000000002,))
+Begin Object Class=/Script/UnrealEd.MaterialGraphNode Name="MaterialGraphNode_2"
+   Begin Object Class=/Script/Engine.MaterialExpressionVectorParameter Name="MaterialExpressionVectorParameter_0"
+   End Object
+   Begin Object Name="MaterialExpressionVectorParameter_0"
+      ParameterName="Tint"
+      MaterialExpressionEditorX=-384
+      MaterialExpressionEditorY=128
+      MaterialExpressionGuid=BBBB0003000000000000000000000003
+   End Object
+   MaterialExpression=MaterialExpressionVectorParameter'"MaterialExpressionVectorParameter_0"'
+   NodePosX=-384
+   NodePosY=128
+   NodeGuid=CCCC0003000000000000000000000003
+   CustomProperties Pin (PinId=AAAA0003000000000000000000000004,PinName="RGB",PinType.PinCategory="materialoutput",Direction="EGPD_Output",LinkedTo=(MaterialGraphNode_0 AAAA0001000000000000000000000003,))
 End Object
 Begin Object Class=/Script/UnrealEd.MaterialGraphNode_Root Name="MaterialGraphNode_Root_0"
-   MaterialExpressionEditorX=128
-   MaterialExpressionEditorY=0
-   MaterialExpressionGuid=BBBB0004000000000000000000000004
-   CustomProperties Pin (PinId=AAAA4000000000000000000000000001,PinName="BaseColor",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_Multiply_0 AAAA2000000000000000000000000003,))
-   CustomProperties Pin (PinId=AAAA4000000000000000000000000002,PinName="Metallic",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=())
+   NodePosX=128
+   NodePosY=0
+   NodeGuid=CCCC0004000000000000000000000004
+   CustomProperties Pin (PinId=AAAA0004000000000000000000000006,PinName="BaseColor",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=(MaterialGraphNode_0 AAAA0001000000000000000000000005,))
+   CustomProperties Pin (PinId=AAAA0004000000000000000000000007,PinName="Metallic",PinType.PinCategory="materialinput",Direction="EGPD_Input",LinkedTo=())
 End Object`,
   },
 ];
