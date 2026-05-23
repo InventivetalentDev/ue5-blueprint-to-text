@@ -90,6 +90,47 @@ End Object`;
   });
 });
 
+describe("renderMarkdown — macros", () => {
+  const macroBP = (assetPath: string, graphName: string) => `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_MacroInstance_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_MacroInstance Name="K2Node_MacroInstance_0"
+   MacroGraphReference=(MacroGraph=EdGraph'"${assetPath}:${graphName}"',GraphBlueprint=Blueprint'"${assetPath}"',GraphGuid=DEAD0000000000000000000000000001)
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="Array",PinType.PinCategory="wildcard",PinType.ContainerType=Array,Direction="EGPD_Input")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="LoopBody",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="ArrayElement",PinType.PinCategory="wildcard",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="ArrayIndex",PinType.PinCategory="int",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=77777777777777777777777777777777,PinName="Completed",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+End Object`;
+
+  it("renders engine macros with the macro name and exec branches", () => {
+    const g = parse(
+      macroBP(
+        "/Engine/EditorBlueprintResources/StandardMacros.StandardMacros",
+        "ForEachLoop",
+      ),
+    );
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/ForEachLoop\(/);
+    expect(md).toMatch(/LoopBody:/);
+    expect(md).toMatch(/Completed:/);
+    // No warning for engine macros
+    expect(md).not.toMatch(/is custom/);
+  });
+
+  it("warns when a custom macro body is not in the paste", () => {
+    const g = parse(macroBP("/Game/Blueprints/BP_MyLib.BP_MyLib", "MyCoolMacro"));
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/MyCoolMacro\(/);
+    expect(md).toMatch(/Warnings:/);
+    expect(md).toMatch(/MyCoolMacro.*custom.*BP_MyLib/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);

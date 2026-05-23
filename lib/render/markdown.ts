@@ -169,6 +169,7 @@ function renderExecChain(
   idx: GraphIndex,
   depth: number,
   seen: Set<string>,
+  warnings: string[],
 ): string[] {
   const lines: string[] = [];
   let current: T3DNode | undefined = start;
@@ -181,6 +182,7 @@ function renderExecChain(
     const formatted = formatBlueprintNode(current, {
       resolveInput: (pin) => resolvePinInput(pin, current!, idx, new Set()),
     });
+    if (formatted.warnings) warnings.push(...formatted.warnings);
     lines.push(`${"  ".repeat(depth)}- ${formatted.statement}`);
     // Handle branch-style nodes that fan out via multiple named exec outputs
     if (formatted.branches && formatted.branches.length > 0) {
@@ -193,7 +195,7 @@ function renderExecChain(
           const outs = idx.outgoingByPin.get(outPin.id) ?? [];
           for (const edge of outs) {
             const next = idx.nodes.get(edge.to.nodeName);
-            if (next) lines.push(...renderExecChain(next, idx, depth + 2, seen));
+            if (next) lines.push(...renderExecChain(next, idx, depth + 2, seen, warnings));
           }
         }
       }
@@ -215,42 +217,53 @@ function renderExecChain(
 function renderBlueprint(graph: ParsedGraph): string {
   const idx = indexGraph(graph);
   const roots = findExecRoots(graph, idx);
-  const out: string[] = [];
-  out.push(`# Blueprint Graph`);
-  out.push("");
-  if (graph.warnings.length) {
-    out.push(`> Warnings:`);
-    for (const w of graph.warnings) out.push(`> - ${w}`);
-    out.push("");
-  }
-  if (roots.length === 0) {
-    out.push(`*No event/root nodes found.*`);
-    out.push("");
-  }
+  const runtimeWarnings: string[] = [];
+  const body: string[] = [];
+
   const allVisited = new Set<string>();
   for (const root of roots) {
-    out.push(`## ${rootHeading(root)}`);
-    out.push("");
-    const chain = renderExecChain(root, idx, 0, allVisited);
-    out.push(...chain);
-    out.push("");
+    body.push(`## ${rootHeading(root)}`);
+    body.push("");
+    const chain = renderExecChain(root, idx, 0, allVisited, runtimeWarnings);
+    body.push(...chain);
+    body.push("");
   }
   // Orphan data nodes (no exec, not visited)
   const orphans = graph.nodes.filter(
     (n) => !allVisited.has(n.name) && !n.pins.some((p) => isExecPin(p)),
   );
   if (orphans.length > 0) {
-    out.push(`## Data nodes`);
-    out.push("");
+    body.push(`## Data nodes`);
+    body.push("");
     for (const n of orphans) {
       const formatted = formatBlueprintNode(n, {
         resolveInput: (pin) => resolvePinInput(pin, n, idx, new Set()),
       });
-      out.push(`- \`${n.name}\`: ${formatted.statement}`);
+      if (formatted.warnings) runtimeWarnings.push(...formatted.warnings);
+      body.push(`- \`${n.name}\`: ${formatted.statement}`);
     }
+    body.push("");
+  }
+
+  const out: string[] = [];
+  out.push(`# Blueprint Graph`);
+  out.push("");
+  const allWarnings = [...graph.warnings, ...dedupe(runtimeWarnings)];
+  if (allWarnings.length) {
+    out.push(`> Warnings:`);
+    for (const w of allWarnings) out.push(`> - ${w}`);
     out.push("");
   }
+  if (roots.length === 0) {
+    out.push(`*No event/root nodes found.*`);
+    out.push("");
+  }
+  out.push(...body);
   return out.join("\n").trim() + "\n";
+}
+
+function dedupe(items: string[]): string[] {
+  return Array.from(new Set(items));
 }
 
 function rootHeading(node: T3DNode): string {

@@ -11,6 +11,7 @@ export interface FormattedNode {
   expression?: string;
   heading?: string;
   branches?: { pinName: string; label: string }[];
+  warnings?: string[];
 }
 
 export function isExecPin(pin: Pin): boolean {
@@ -36,6 +37,30 @@ function extractMemberRef(raw: string): { parent?: string; name?: string } {
     }
   }
   return { parent, name: memberName };
+}
+
+/**
+ * Parses a `MacroGraphReference=(MacroGraph=EdGraph'"<asset>:<graph>"',...)`
+ * value into its asset path and graph (macro) name.
+ */
+export function extractGraphRef(
+  raw: string,
+): { assetPath?: string; graphName?: string; isEngine?: boolean } {
+  if (!raw) return {};
+  const fields = parseStructFields(raw.replace(/^\(/, "").replace(/\)$/, ""));
+  const graphRef = fields.MacroGraph ?? fields.GraphReference;
+  if (!graphRef) return {};
+  const m = graphRef.match(/['"]+([^'"]+)['"]+/);
+  if (!m) return {};
+  const fullPath = m[1];
+  const colonIdx = fullPath.lastIndexOf(":");
+  const assetPath = colonIdx === -1 ? fullPath : fullPath.slice(0, colonIdx);
+  const graphName = colonIdx === -1 ? undefined : fullPath.slice(colonIdx + 1);
+  return {
+    assetPath,
+    graphName,
+    isEngine: assetPath.startsWith("/Engine/"),
+  };
 }
 
 function inputPins(node: T3DNode, opts?: { skipFirstExec?: boolean; skipSelf?: boolean }): Pin[] {
@@ -119,6 +144,30 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
       .filter((p) => p.direction === "output" && isExecPin(p))
       .map((p) => ({ pinName: p.name, label: p.name }));
     return { statement: `sequence`, branches };
+  }
+  if (cls.includes("K2Node_MacroInstance")) {
+    const ref = extractGraphRef(node.properties.MacroGraphReference ?? "");
+    const macroName = ref.graphName ?? "Macro";
+    const args = inputPins(node, { skipFirstExec: true, skipSelf: true }).map(
+      (p) => `${p.name}=${ctx.resolveInput(p)}`,
+    );
+    const execOutputs = node.pins.filter(
+      (p) => p.direction === "output" && isExecPin(p),
+    );
+    const warnings: string[] = [];
+    if (ref.assetPath && !ref.isEngine) {
+      warnings.push(
+        `Macro \`${macroName}\` is custom (${ref.assetPath}) — its body is not in the paste; only the call site is shown. Paste its graph separately to include the body.`,
+      );
+    }
+    return {
+      statement: `${macroName}(${args.join(", ")})`,
+      branches:
+        execOutputs.length >= 2
+          ? execOutputs.map((p) => ({ pinName: p.name, label: p.name }))
+          : undefined,
+      warnings: warnings.length ? warnings : undefined,
+    };
   }
   if (cls.includes("K2Node_VariableGet")) {
     const ref = extractMemberRef(node.properties.VariableReference ?? "");
