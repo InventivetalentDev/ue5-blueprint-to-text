@@ -1,23 +1,17 @@
 export const DRAFT_KEY = "ue5bp.draft";
-export const HISTORY_KEY = "ue5bp.history";
-export const HISTORY_MAX = 10;
-const PREVIEW_LEN = 80;
+export const SAVED_KEY = "ue5bp.saved";
+const LEGACY_HISTORY_KEY = "ue5bp.history";
 
-export type HistoryEntry = {
+export type SavedGraph = {
   id: string;
+  name: string;
   value: string;
-  savedAt: number;
-  preview: string;
+  createdAt: number;
+  updatedAt: number;
 };
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";
-}
-
-function makePreview(value: string): string {
-  const collapsed = value.replace(/\s+/g, " ").trim();
-  if (collapsed.length <= PREVIEW_LEN) return collapsed;
-  return collapsed.slice(0, PREVIEW_LEN) + "…";
 }
 
 function makeId(): string {
@@ -47,59 +41,116 @@ export function saveDraft(value: string): void {
   }
 }
 
-export function loadHistory(): HistoryEntry[] {
+export function loadSaved(): SavedGraph[] {
   if (!hasWindow()) return [];
   try {
-    const raw = window.localStorage.getItem(HISTORY_KEY);
+    window.localStorage.removeItem(LEGACY_HISTORY_KEY);
+  } catch {
+    // ignore
+  }
+  try {
+    const raw = window.localStorage.getItem(SAVED_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter(
-      (e): e is HistoryEntry =>
+      (e): e is SavedGraph =>
         e &&
         typeof e.id === "string" &&
+        typeof e.name === "string" &&
         typeof e.value === "string" &&
-        typeof e.savedAt === "number" &&
-        typeof e.preview === "string",
+        typeof e.createdAt === "number" &&
+        typeof e.updatedAt === "number",
     );
   } catch (e) {
-    console.warn("loadHistory failed", e);
+    console.warn("loadSaved failed", e);
     return [];
   }
 }
 
-function writeHistory(entries: HistoryEntry[]): void {
+function writeSaved(entries: SavedGraph[]): void {
   if (!hasWindow()) return;
   try {
-    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(entries));
+    window.localStorage.setItem(SAVED_KEY, JSON.stringify(entries));
   } catch (e) {
-    console.warn("writeHistory failed", e);
+    console.warn("writeSaved failed", e);
   }
 }
 
-export function pushHistory(value: string): HistoryEntry[] {
-  const trimmed = value.trim();
-  if (!trimmed) return loadHistory();
-  const current = loadHistory();
-  if (current.length > 0 && current[0].value === value) return current;
-  const entry: HistoryEntry = {
-    id: makeId(),
-    value,
-    savedAt: Date.now(),
-    preview: makePreview(value),
-  };
-  const next = [entry, ...current].slice(0, HISTORY_MAX);
-  writeHistory(next);
+export function suggestName(existing: SavedGraph[]): string {
+  const used = new Set(existing.map((e) => e.name));
+  for (let i = 1; i < 1000; i++) {
+    const candidate = `Graph ${i}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `Graph ${Date.now()}`;
+}
+
+export function findByName(
+  entries: SavedGraph[],
+  name: string,
+): SavedGraph | undefined {
+  return entries.find((e) => e.name === name);
+}
+
+export type SaveResult = {
+  entries: SavedGraph[];
+  saved: SavedGraph;
+};
+
+export function upsertGraph(
+  id: string | null,
+  name: string,
+  value: string,
+): SaveResult {
+  const trimmedName = name.trim();
+  if (!trimmedName) throw new Error("Name cannot be empty");
+  const now = Date.now();
+  const current = loadSaved();
+  const idx = id ? current.findIndex((e) => e.id === id) : -1;
+  let next: SavedGraph[];
+  let saved: SavedGraph;
+  if (idx >= 0) {
+    saved = { ...current[idx], name: trimmedName, value, updatedAt: now };
+    next = [...current];
+    next[idx] = saved;
+  } else {
+    saved = {
+      id: makeId(),
+      name: trimmedName,
+      value,
+      createdAt: now,
+      updatedAt: now,
+    };
+    next = [saved, ...current];
+  }
+  writeSaved(next);
+  return { entries: next, saved };
+}
+
+export function renameGraph(id: string, name: string): SavedGraph[] {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Name cannot be empty");
+  const current = loadSaved();
+  const next = current.map((e) =>
+    e.id === id ? { ...e, name: trimmed, updatedAt: Date.now() } : e,
+  );
+  writeSaved(next);
   return next;
 }
 
-export function clearAll(): void {
+export function deleteGraph(id: string): SavedGraph[] {
+  const next = loadSaved().filter((e) => e.id !== id);
+  writeSaved(next);
+  return next;
+}
+
+export function clearDraft(): void {
   if (!hasWindow()) return;
   try {
     window.localStorage.removeItem(DRAFT_KEY);
-    window.localStorage.removeItem(HISTORY_KEY);
   } catch (e) {
-    console.warn("clearAll failed", e);
+    console.warn("clearDraft failed", e);
   }
 }
 

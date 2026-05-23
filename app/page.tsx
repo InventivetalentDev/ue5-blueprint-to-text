@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { parse } from "@/lib/parser/graph";
 import { detectDefinitionInfo } from "@/lib/parser/detect";
 import { renderMarkdown } from "@/lib/render/markdown";
@@ -8,13 +8,17 @@ import { renderJson, renderYaml } from "@/lib/render/structured";
 import type { GraphKind, MacroFunctionDefinition } from "@/lib/parser/types";
 import { EXAMPLES } from "./examples";
 import {
-  clearAll,
+  clearDraft,
+  deleteGraph,
+  findByName,
   formatRelative,
   loadDraft,
-  loadHistory,
-  pushHistory,
+  loadSaved,
+  renameGraph,
   saveDraft,
-  type HistoryEntry,
+  suggestName,
+  upsertGraph,
+  type SavedGraph,
 } from "@/lib/storage";
 
 type Format = "markdown" | "yaml" | "json";
@@ -40,14 +44,13 @@ export default function Page() {
   const [format, setFormat] = useState<Format>("markdown");
   const [kindChoice, setKindChoice] = useState<KindChoice>("auto");
   const [cards, setCards] = useState<DefinitionCard[]>([]);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [saved, setSaved] = useState<SavedGraph[]>([]);
+  const [currentSaveId, setCurrentSaveId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
-  const inputRef = useRef(input);
-  inputRef.current = input;
 
   useEffect(() => {
     setInput(loadDraft());
-    setHistory(loadHistory());
+    setSaved(loadSaved());
     setHydrated(true);
   }, []);
 
@@ -97,30 +100,68 @@ export default function Page() {
     await navigator.clipboard.writeText(result.output);
   };
 
-  const snapshot = (prev: string) => {
-    if (!prev.trim()) return;
-    setHistory(pushHistory(prev));
-  };
-
   const loadExample = (idx: number) => {
     if (idx < 0 || idx >= EXAMPLES.length) return;
-    snapshot(inputRef.current);
     setInput(EXAMPLES[idx].value);
+    setCurrentSaveId(null);
   };
 
-  const restoreFromHistory = (id: string) => {
-    const entry = history.find((h) => h.id === id);
+  const loadFromSaved = (id: string) => {
+    const entry = saved.find((s) => s.id === id);
     if (!entry) return;
-    snapshot(inputRef.current);
     setInput(entry.value);
+    setCurrentSaveId(entry.id);
+  };
+
+  const current = currentSaveId ? saved.find((s) => s.id === currentSaveId) : null;
+
+  const handleSave = () => {
+    if (!input.trim()) return;
+    const defaultName = current?.name ?? suggestName(saved);
+    const name = window.prompt("Name for this graph:", defaultName);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const clash = findByName(saved, trimmed);
+    if (clash && clash.id !== currentSaveId) {
+      if (!window.confirm(`Overwrite existing "${trimmed}"?`)) return;
+      const result = upsertGraph(clash.id, trimmed, input);
+      setSaved(result.entries);
+      setCurrentSaveId(result.saved.id);
+      return;
+    }
+    const result = upsertGraph(currentSaveId, trimmed, input);
+    setSaved(result.entries);
+    setCurrentSaveId(result.saved.id);
+  };
+
+  const handleRename = () => {
+    if (!current) return;
+    const name = window.prompt("New name:", current.name);
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === current.name) return;
+    const clash = findByName(saved, trimmed);
+    if (clash && clash.id !== current.id) {
+      window.alert(`A graph named "${trimmed}" already exists.`);
+      return;
+    }
+    setSaved(renameGraph(current.id, trimmed));
+  };
+
+  const handleDelete = () => {
+    if (!current) return;
+    if (!window.confirm(`Delete "${current.name}"?`)) return;
+    setSaved(deleteGraph(current.id));
+    setCurrentSaveId(null);
   };
 
   const handleClear = () => {
-    if (!input && history.length === 0) return;
-    if (!window.confirm("Clear saved draft and history?")) return;
-    clearAll();
-    setHistory([]);
+    if (!input) return;
+    if (!window.confirm("Clear current input? Saved graphs will be kept.")) return;
+    clearDraft();
     setInput("");
+    setCurrentSaveId(null);
   };
 
   const addCard = () => setCards((cs) => [...cs, newCard()]);
@@ -171,22 +212,22 @@ export default function Page() {
             </select>
           </label>
           <label>
-            History
+            Saved
             <select
-              defaultValue=""
-              disabled={history.length === 0}
+              value={currentSaveId ?? ""}
+              disabled={saved.length === 0}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v !== "") restoreFromHistory(v);
-                e.target.value = "";
+                if (v === "") setCurrentSaveId(null);
+                else loadFromSaved(v);
               }}
             >
               <option value="">
-                {history.length === 0 ? "No history" : "Restore…"}
+                {saved.length === 0 ? "No saved graphs" : "— New —"}
               </option>
-              {history.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {formatRelative(h.savedAt)} — {h.preview}
+              {saved.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({formatRelative(s.updatedAt)})
                 </option>
               ))}
             </select>
@@ -214,10 +255,32 @@ export default function Page() {
             Copy output
           </button>
           <button
+            onClick={handleSave}
+            disabled={!input.trim()}
+            title={current ? `Save (currently editing "${current.name}")` : "Save graph"}
+          >
+            {current ? "Save" : "Save as…"}
+          </button>
+          <button
+            onClick={handleRename}
+            disabled={!current}
+            title="Rename loaded graph"
+          >
+            Rename
+          </button>
+          <button
+            className="danger"
+            onClick={handleDelete}
+            disabled={!current}
+            title="Delete loaded graph"
+          >
+            Delete
+          </button>
+          <button
             className="danger"
             onClick={handleClear}
-            disabled={!input && history.length === 0}
-            title="Clear saved draft and history"
+            disabled={!input}
+            title="Clear current input"
           >
             Clear
           </button>
@@ -226,7 +289,10 @@ export default function Page() {
       <main className="split">
         <section className="pane">
           <div className="pane-header">
-            <span>Input (T3D from UE clipboard)</span>
+            <span>
+              Input (T3D from UE clipboard)
+              {current ? ` — ${current.name}` : ""}
+            </span>
             <span>{input.length.toLocaleString()} chars</span>
           </div>
           <div className="pane-body">
@@ -237,7 +303,6 @@ export default function Page() {
                 "Select nodes in the Blueprint or Material editor, press Ctrl+C, paste here."
               }
               value={input}
-              onPaste={() => snapshot(inputRef.current)}
               onChange={(e) => setInput(e.target.value)}
             />
           </div>
