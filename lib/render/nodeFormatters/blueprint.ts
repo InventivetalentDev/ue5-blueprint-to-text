@@ -59,8 +59,15 @@ function parseClassPathTail(raw: string): string | undefined {
 }
 
 /**
- * Parses a `MacroGraphReference=(MacroGraph=EdGraph'"<asset>:<graph>"',...)`
- * value into its asset path and graph (macro) name.
+ * Parses a `MacroGraphReference=(MacroGraph=...,GraphBlueprint=...)` value
+ * into its macro name and owning-asset path. Handles both shapes UE has
+ * emitted over the years:
+ *
+ *   MacroGraph=EdGraph'"/Engine/.../StandardMacros.StandardMacros:ForEachLoop"'
+ *   MacroGraph="/Script/Engine.EdGraph'MacroName'"
+ *
+ * In the second form the asset path lives on the sibling `GraphBlueprint`
+ * field instead of being suffixed onto the MacroGraph value.
  */
 export function extractGraphRef(
   raw: string,
@@ -69,16 +76,42 @@ export function extractGraphRef(
   const fields = parseStructFields(raw.replace(/^\(/, "").replace(/\)$/, ""));
   const graphRef = fields.MacroGraph ?? fields.GraphReference;
   if (!graphRef) return {};
-  const m = graphRef.match(/['"]+([^'"]+)['"]+/);
-  if (!m) return {};
-  const fullPath = m[1];
-  const colonIdx = fullPath.lastIndexOf(":");
-  const assetPath = colonIdx === -1 ? fullPath : fullPath.slice(0, colonIdx);
-  const graphName = colonIdx === -1 ? undefined : fullPath.slice(colonIdx + 1);
+
+  // Peel off a single layer of outer double quotes if present.
+  let working = graphRef.trim();
+  if (working.startsWith('"') && working.endsWith('"')) {
+    working = working.slice(1, -1);
+  }
+
+  // The innermost reference is whatever sits between the deepest quote pair.
+  const innerDouble = working.match(/"([^"]+)"/)?.[1];
+  const innerSingle = working.match(/'([^']+)'/)?.[1];
+  const inner = innerDouble ?? innerSingle ?? working;
+
+  let assetPath: string | undefined;
+  let graphName: string | undefined;
+  if (inner.includes(":")) {
+    const colonIdx = inner.lastIndexOf(":");
+    assetPath = inner.slice(0, colonIdx);
+    graphName = inner.slice(colonIdx + 1);
+  } else if (inner.startsWith("/")) {
+    assetPath = inner;
+  } else {
+    graphName = inner;
+    // Asset path lives on the GraphBlueprint sibling in this format.
+    const bpRaw = fields.GraphBlueprint;
+    if (bpRaw) {
+      let bp = bpRaw.trim();
+      if (bp.startsWith('"') && bp.endsWith('"')) bp = bp.slice(1, -1);
+      assetPath =
+        bp.match(/'([^']+)'/)?.[1] ?? bp.match(/"([^"]+)"/)?.[1] ?? bp;
+    }
+  }
+
   return {
     assetPath,
     graphName,
-    isEngine: assetPath.startsWith("/Engine/"),
+    isEngine: assetPath?.startsWith("/Engine/") ?? false,
   };
 }
 
@@ -116,6 +149,7 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `Event ${name}`,
       heading: `Event ${name}${ref.parent ? ` (from ${ref.parent})` : ""}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
     };
   }
   if (cls.includes("K2Node_CustomEvent")) {
@@ -123,6 +157,7 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `CustomEvent ${name}`,
       heading: `CustomEvent ${name}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
     };
   }
   if (cls.includes("K2Node_FunctionEntry")) {
@@ -131,14 +166,40 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     return {
       statement: `function ${name}()`,
       heading: `function ${name}`,
+      expression: ctx.outputPinName ? `${name}.${ctx.outputPinName}` : name,
     };
   }
   if (cls.includes("K2Node_Tunnel")) {
     const isEntry =
       stripQuotes(node.properties.bCanHaveOutputs ?? "False") === "True";
+    const label = isEntry ? "entry" : "exit";
     return {
-      statement: isEntry ? "entry" : "exit",
+      statement: label,
       heading: isEntry ? "Entry" : "Exit",
+      expression: ctx.outputPinName ? `${label}.${ctx.outputPinName}` : label,
+    };
+  }
+  if (cls.includes("K2Node_Knot")) {
+    // Reroute / passthrough — just forward the input value through.
+    const dataIn = node.pins.find(
+      (p) => p.direction === "input" && !isExecPin(p),
+    );
+    if (dataIn) {
+      const value = ctx.resolveInput(dataIn);
+      return { statement: value, expression: value };
+    }
+    return { statement: "(knot)", expression: "" };
+  }
+  if (cls.includes("K2Node_BreakStruct") || cls.includes("K2Node_BreakStructure")) {
+    const structInput = node.pins.find(
+      (p) => p.direction === "input" && !isExecPin(p),
+    );
+    const structValue = structInput ? ctx.resolveInput(structInput) : "?";
+    return {
+      statement: `break ${structValue}`,
+      expression: ctx.outputPinName
+        ? `${structValue}.${ctx.outputPinName}`
+        : `break(${structValue})`,
     };
   }
   if (cls.includes("K2Node_CallFunction")) {
@@ -193,6 +254,9 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
     }
     return {
       statement: `${macroName}(${args.join(", ")})`,
+      expression: ctx.outputPinName
+        ? `${macroName}.${ctx.outputPinName}`
+        : macroName,
       branches:
         execOutputs.length >= 2
           ? execOutputs.map((p) => ({ pinName: p.name, label: p.name }))

@@ -209,6 +209,93 @@ End Object`;
   });
 });
 
+describe("renderMarkdown — MacroGraphReference formats", () => {
+  const bpWithRef = (ref: string) => `Begin Object Class=/Script/BlueprintGraph.K2Node_Event Name="K2Node_Event_0"
+   EventReference=(MemberParent=Class'"/Script/Engine.Actor"',MemberName="ReceiveBeginPlay")
+   NodeGuid=DDDD0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=(K2Node_MacroInstance_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_MacroInstance Name="K2Node_MacroInstance_0"
+   MacroGraphReference=${ref}
+   NodeGuid=DDDD0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="execute",PinType.PinCategory="exec",LinkedTo=(K2Node_Event_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output",LinkedTo=())
+End Object`;
+
+  it("parses inner-single-quote format with sibling GraphBlueprint", () => {
+    const g = parse(
+      bpWithRef(
+        `(MacroGraph="/Script/Engine.EdGraph'DrawDebugArrowDown'",GraphBlueprint="/Script/Engine.Blueprint'/Game/BP_SnowManager.BP_SnowManager'",GraphGuid=FA23934F4198BC9F0A99B88D89B778FA)`,
+      ),
+    );
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/DrawDebugArrowDown\(/);
+    expect(md).toMatch(/BP_SnowManager/);
+  });
+
+  it("still parses the colon-suffix format used by engine macros", () => {
+    const g = parse(
+      bpWithRef(
+        `(MacroGraph=EdGraph'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoop"',GraphBlueprint=Blueprint'"/Engine/EditorBlueprintResources/StandardMacros.StandardMacros"',GraphGuid=DEAD)`,
+      ),
+    );
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/ForEachLoop\(/);
+    expect(md).not.toMatch(/Warnings:[\s\S]*ForEachLoop/);
+  });
+});
+
+describe("renderMarkdown — Knot and BreakStruct transparency", () => {
+  it("inlines K2Node_Knot value into downstream args", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_0"
+   VariableReference=(MemberName="MyVar",bSelfContext=True)
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="MyVar",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_Knot_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_Knot Name="K2Node_Knot_0"
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="InputPin",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="OutputPin",PinType.PinCategory="int",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetMathLibrary"',MemberName="Add_IntInt")
+   NodeGuid=AAAA0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="int",Direction="EGPD_Input",LinkedTo=(K2Node_Knot_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    // The knot wrapper should not appear; the variable name shows through.
+    expect(md).toMatch(/A=MyVar/);
+    expect(md).not.toMatch(/Knot\(InputPin=/);
+  });
+
+  it("renders BreakStruct field access via the output pin name", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_0"
+   VariableReference=(MemberName="MyVec",bSelfContext=True)
+   NodeGuid=AAAA0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="MyVec",PinType.PinCategory="struct",Direction="EGPD_Output",LinkedTo=(K2Node_BreakStruct_0 22222222222222222222222222222222,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_BreakStruct Name="K2Node_BreakStruct_0"
+   StructType=/Script/CoreUObject.Vector
+   NodeGuid=AAAA0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="MyVec",PinType.PinCategory="struct",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_0 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="X",PinType.PinCategory="real",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetMathLibrary"',MemberName="Abs_Double")
+   NodeGuid=AAAA0003000000000000000000000003
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="A",PinType.PinCategory="real",Direction="EGPD_Input",LinkedTo=(K2Node_BreakStruct_0 33333333333333333333333333333333,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g);
+    expect(md).toMatch(/A=MyVec\.X/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);
