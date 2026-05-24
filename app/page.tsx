@@ -13,11 +13,14 @@ import {
   findByName,
   formatRelative,
   loadDraft,
+  loadDraftCards,
   loadSaved,
   renameGraph,
   saveDraft,
+  saveDraftCards,
   suggestName,
   upsertGraph,
+  type SavedCard,
   type SavedGraph,
 } from "@/lib/storage";
 
@@ -39,6 +42,17 @@ const newCard = (): DefinitionCard => ({
   body: "",
 });
 
+const cardsFromSaved = (cards: SavedCard[]): DefinitionCard[] =>
+  cards.map((c) => ({
+    id: nextCardId++,
+    name: c.name,
+    kind: c.kind,
+    body: c.body,
+  }));
+
+const cardsToSaved = (cards: DefinitionCard[]): SavedCard[] =>
+  cards.map((c) => ({ name: c.name, kind: c.kind, body: c.body }));
+
 export default function Page() {
   const [input, setInput] = useState("");
   const [format, setFormat] = useState<Format>("markdown");
@@ -50,6 +64,7 @@ export default function Page() {
 
   useEffect(() => {
     setInput(loadDraft());
+    setCards(cardsFromSaved(loadDraftCards()));
     setSaved(loadSaved());
     setHydrated(true);
   }, []);
@@ -59,6 +74,12 @@ export default function Page() {
     const t = setTimeout(() => saveDraft(input), 500);
     return () => clearTimeout(t);
   }, [input, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const t = setTimeout(() => saveDraftCards(cardsToSaved(cards)), 500);
+    return () => clearTimeout(t);
+  }, [cards, hydrated]);
 
   const result = useMemo(() => {
     if (!input.trim())
@@ -103,6 +124,7 @@ export default function Page() {
   const loadExample = (idx: number) => {
     if (idx < 0 || idx >= EXAMPLES.length) return;
     setInput(EXAMPLES[idx].value);
+    setCards([]);
     setCurrentSaveId(null);
   };
 
@@ -110,6 +132,7 @@ export default function Page() {
     const entry = saved.find((s) => s.id === id);
     if (!entry) return;
     setInput(entry.value);
+    setCards(cardsFromSaved(entry.cards));
     setCurrentSaveId(entry.id);
   };
 
@@ -122,15 +145,16 @@ export default function Page() {
     if (name === null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
+    const snapshot = cardsToSaved(cards);
     const clash = findByName(saved, trimmed);
     if (clash && clash.id !== currentSaveId) {
       if (!window.confirm(`Overwrite existing "${trimmed}"?`)) return;
-      const result = upsertGraph(clash.id, trimmed, input);
+      const result = upsertGraph(clash.id, trimmed, input, snapshot);
       setSaved(result.entries);
       setCurrentSaveId(result.saved.id);
       return;
     }
-    const result = upsertGraph(currentSaveId, trimmed, input);
+    const result = upsertGraph(currentSaveId, trimmed, input, snapshot);
     setSaved(result.entries);
     setCurrentSaveId(result.saved.id);
   };
@@ -157,10 +181,11 @@ export default function Page() {
   };
 
   const handleClear = () => {
-    if (!input) return;
+    if (!input && cards.length === 0) return;
     if (!window.confirm("Clear current input? Saved graphs will be kept.")) return;
     clearDraft();
     setInput("");
+    setCards([]);
     setCurrentSaveId(null);
   };
 
@@ -279,8 +304,8 @@ export default function Page() {
           <button
             className="danger"
             onClick={handleClear}
-            disabled={!input}
-            title="Clear current input"
+            disabled={!input && cards.length === 0}
+            title="Clear current input and macro/function cards"
           >
             Clear
           </button>
