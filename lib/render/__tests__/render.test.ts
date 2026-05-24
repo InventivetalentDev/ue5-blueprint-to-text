@@ -348,6 +348,39 @@ End Object`;
   });
 });
 
+describe("renderMarkdown — MathExpression", () => {
+  it("renders the Expression body with input pins substituted", () => {
+    const t3d = `Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_FR"
+   VariableReference=(MemberName="FR_UV",bSelfContext=True)
+   NodeGuid=EEEE0001000000000000000000000001
+   CustomProperties Pin (PinId=11111111111111111111111111111111,PinName="FR_UV",PinType.PinCategory="struct",Direction="EGPD_Output",LinkedTo=(K2Node_MathExpression_0 33333333333333333333333333333333,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_VariableGet Name="K2Node_VariableGet_BR"
+   VariableReference=(MemberName="BR_UV",bSelfContext=True)
+   NodeGuid=EEEE0002000000000000000000000002
+   CustomProperties Pin (PinId=22222222222222222222222222222222,PinName="BR_UV",PinType.PinCategory="struct",Direction="EGPD_Output",LinkedTo=(K2Node_MathExpression_0 44444444444444444444444444444444,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_MathExpression Name="K2Node_MathExpression_0"
+   Expression="((FR_UV + BR_UV) / 2)"
+   NodeGuid=EEEE0003000000000000000000000003
+   CustomProperties Pin (PinId=33333333333333333333333333333333,PinName="FR_UV",PinType.PinCategory="struct",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_FR 11111111111111111111111111111111,))
+   CustomProperties Pin (PinId=44444444444444444444444444444444,PinName="BR_UV",PinType.PinCategory="struct",Direction="EGPD_Input",LinkedTo=(K2Node_VariableGet_BR 22222222222222222222222222222222,))
+   CustomProperties Pin (PinId=55555555555555555555555555555555,PinName="ReturnValue",PinType.PinCategory="struct",Direction="EGPD_Output",LinkedTo=(K2Node_CallFunction_0 66666666666666666666666666666666,))
+End Object
+Begin Object Class=/Script/BlueprintGraph.K2Node_CallFunction Name="K2Node_CallFunction_0"
+   FunctionReference=(MemberParent=Class'"/Script/Engine.KismetSystemLibrary"',MemberName="PrintString")
+   NodeGuid=EEEE0004000000000000000000000004
+   CustomProperties Pin (PinId=77777777777777777777777777777777,PinName="execute",PinType.PinCategory="exec")
+   CustomProperties Pin (PinId=88888888888888888888888888888888,PinName="then",PinType.PinCategory="exec",Direction="EGPD_Output")
+   CustomProperties Pin (PinId=66666666666666666666666666666666,PinName="InString",PinType.PinCategory="struct",Direction="EGPD_Input",LinkedTo=(K2Node_MathExpression_0 55555555555555555555555555555555,))
+End Object`;
+    const g = parse(t3d, "blueprint");
+    const md = renderMarkdown(g).output;
+    expect(md).toMatch(/\(\(\(FR_UV\) \+ \(BR_UV\)\) \/ 2\)/);
+    expect(md).not.toMatch(/MathExpression\(/);
+  });
+});
+
 describe("structured renderers", () => {
   it("renderYaml includes kind and nodes and edges", () => {
     const g = parse(BP);

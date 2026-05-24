@@ -304,6 +304,25 @@ export function formatBlueprintNode(node: T3DNode, ctx: FormatContext): Formatte
       expression: `{${items.join(", ")}}`,
     };
   }
+  if (cls.includes("K2Node_MathExpression")) {
+    const rawExpr = stripQuotes(node.properties.Expression ?? "").trim();
+    const inputs = inputPins(node, { skipFirstExec: true, skipSelf: true });
+    const resolved = inputs.map((p) => ({ name: p.name, value: ctx.resolveInput(p) }));
+    let body = rawExpr || inputs.map((p) => p.name).join(" ? ");
+    // Substitute each named input variable with its resolved expression. Sort
+    // by descending name length so a variable like `A` doesn't clobber `Abs`.
+    const sorted = [...resolved].sort((a, b) => b.name.length - a.name.length);
+    for (const { name, value } of sorted) {
+      if (!name) continue;
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const re = new RegExp(`\\b${escaped}\\b`, "g");
+      body = body.replace(re, `(${value})`);
+    }
+    return {
+      statement: body,
+      expression: body,
+    };
+  }
   if (cls.includes("K2Node_CommutativeAssociativeBinaryOperator") || cls.includes("K2Node_PromotableOperator")) {
     const ref = extractMemberRef(node.properties.FunctionReference ?? "");
     const op = ref.name ?? "op";
